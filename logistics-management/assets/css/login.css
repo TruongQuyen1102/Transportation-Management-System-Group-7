@@ -1,0 +1,267 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   login.css  —  Login page styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  font-family: var(--font-sans);
+}
+
+/* ─── Left Hero Panel ───────────────────────────────────────────────────────── */
+.login-hero {
+  position: relative;
+  background: var(--c-navy-800);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 48px;
+}
+.hero-gradient {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(160deg, rgba(8,30,48,.92) 0%, rgba(58,83,97,.70) 50%, rgba(45,55,36,.85) 100%);
+  z-index: 1;
+}
+.hero-bg-pattern {
+  position: absolute;
+  inset: 0;
+  opacity: .04;
+  background-image:
+    repeating-linear-gradient(45deg, transparent, transparent 40px, rgba(255,255,255,1) 40px, rgba(255,255,255,1) 41px),
+    repeating-linear-gradient(-45deg, transparent, transparent 40px, rgba(255,255,255,1) 40px, rgba(255,255,255,1) 41px);
+  z-index: 0;
+}
+.hero-truck-img {
+  position: absolute;
+  bottom: 0; right: -40px;
+  width: 75%;
+  opacity: .18;
+  z-index: 0;
+  filter: blur(1px) grayscale(30%);
+}
+.hero-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.hero-logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: auto;
+}
+.hero-logo-icon {
+  width: 48px; height: 48px;
+  background: linear-gradient(135deg, var(--c-yellow) 0%, var(--c-olive-light) 100%);
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 8px 24px rgba(232,184,75,.4);
+}
+.hero-logo-text .brand {
+  font-size: 22px;
+  font-weight: 800;
+  color: white;
+  letter-spacing: .5px;
+  line-height: 1;
+}
+.hero-logo-text .tagline {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,.55);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.hero-headline {
+  color: white;
+  margin-bottom: 40px;
+}
+.hero-headline h1 {
+  font-size: 38px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -.5px;
+  margin-bottom: 16px;
+}
+.hero-headline h1 span { color: var(--c-yellow); }
+.hero-headline p {
+  font-size: 15px;
+  color: rgba(255,255,255,.65);
+  line-height: 1.7;
+  max-width: 380px;
+}
+.hero-stats {
+  display: flex;
+  gap: 32px;
+}
+.hero-stat .val {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--c-yellow);
+  line-height: 1;
+}
+.hero-stat .lbl {
+  font-size: 11px;
+  color: rgba(255,255,255,.55);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+/* ─── Right Form Panel ──────────────────────────────────────────────────────── */
+.login-form-panel {
+  background: var(--c-neutral-100);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 56px;
+  overflow-y: auto;
+}
+.login-box {
+  width: 100%;
+  max-width: 420px;
+}
+.login-box-header {
+  margin-bottom: 32px;
+}
+.login-box-header h2 {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.3px;
+}
+.login-box-header p {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+/* Role selector */
+.role-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+.role-btn {
+  border: 2px solid var(--border-color);
+  background: white;
+  border-radius: 10px;
+  padding: 12px 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+  color: var(--text-secondary);
+}
+.role-btn:hover {
+  border-color: var(--c-slate-600);
+  background: rgba(58,83,97,.05);
+  color: var(--c-slate-600);
+}
+.role-btn.selected {
+  border-color: var(--c-navy-800);
+  background: rgba(12,40,64,.06);
+  color: var(--c-navy-800);
+  box-shadow: 0 0 0 3px rgba(12,40,64,.08);
+}
+.role-btn .role-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+.role-btn .role-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+}
+
+/* Login form */
+.login-form .form-control {
+  background: white;
+  border: 1.5px solid var(--border-color);
+  padding: 11px 14px;
+  font-size: var(--fs-md);
+}
+.input-icon-wrap { position: relative; }
+.input-icon-wrap .input-icon {
+  position: absolute;
+  left: 12px; top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.input-icon-wrap input { padding-left: 40px; }
+.input-icon-wrap .toggle-pw {
+  position: absolute;
+  right: 12px; top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-muted);
+  padding: 0;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 13px;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  background: var(--c-navy-800);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  letter-spacing: .3px;
+  box-shadow: 0 4px 16px rgba(12,40,64,.25);
+}
+.login-submit:hover {
+  background: var(--c-navy-700);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(12,40,64,.35);
+}
+.login-submit:active { transform: translateY(0); }
+
+.login-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 20px;
+}
+.login-hint kbd {
+  background: var(--c-neutral-200);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.login-error {
+  background: var(--c-red-bg);
+  border: 1.5px solid var(--c-red);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: var(--fs-sm);
+  color: #8b1a10;
+  margin-bottom: 16px;
+  display: none;
+}
+.login-error.show { display: block; }
+
+/* ─── Responsive Login ──────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .login-page { grid-template-columns: 1fr; }
+  .login-hero  { display: none; }
+  .login-form-panel { padding: 32px 24px; background: white; }
+}
