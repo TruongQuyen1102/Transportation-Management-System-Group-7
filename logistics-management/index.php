@@ -76,8 +76,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <div class="hero-logo">
         <div class="hero-logo-icon">🚚</div>
         <div class="hero-logo-text">
-          <div class="brand">LogiTrack Pro</div>
-          <div class="tagline">Logistics Management</div>
+          <div class="brand">ITL Logistics Group</div>
+          <div class="tagline">Logistics</div>
         </div>
       </div>
 
@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               name="username"
               class="form-control"
               placeholder="Enter your username"
-              value="admin"
+              value="admin_dang"
               required
               autocomplete="username">
           </div>
@@ -175,17 +175,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
 
         <button type="submit" class="login-submit" id="loginBtn">
-          Sign In to LogiTrack Pro
+          Sign In to ITL Logistics Group
         </button>
       </form>
 
       <!-- Demo Hint -->
       <div class="login-hint">
-        <strong>Demo Credentials:</strong><br>
-        Admin: <kbd>admin</kbd> / <kbd>admin123</kbd> &nbsp;|&nbsp;
-        Ops: <kbd>ops</kbd> / <kbd>ops123</kbd><br>
-        Manager: <kbd>manager</kbd> / <kbd>manager123</kbd> &nbsp;|&nbsp;
-        Accountant: <kbd>accountant</kbd> / <kbd>accountant123</kbd>
+        <strong>Demo Accounts:</strong><br>
+        🔑 Admin: <kbd>admin_dang</kbd> / <kbd>admin123</kbd><br>
+        📊 Manager: <kbd>mgr_maianh</kbd> / <kbd>manager123</kbd> &nbsp;|&nbsp;<br>
+        💰 Accountant: <kbd>acc_mchen</kbd> / <kbd>accountant123</kbd><br>
+        🚛 Operations: <kbd>ops_sarah</kbd> / <kbd>ops123</kbd>
       </div>
     </div>
   </section>
