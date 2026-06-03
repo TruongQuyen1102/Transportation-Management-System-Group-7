@@ -42,8 +42,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign In — LogiTrack Pro</title>
-  <meta name="description" content="LogiTrack Pro Logistics Management System — Secure sign-in portal.">
+  <title>Sign In — ITL Logistics Group</title>
+  <meta name="description" content="ITL Logistics Group Supply Chain Solutions — Secure sign-in portal.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="hero-logo-icon">🚚</div>
         <div class="hero-logo-text">
           <div class="brand">ITL Logistics Group</div>
-          <div class="tagline">Logistics</div>
+          <div class="tagline">Supply Chain Solutions</div>
         </div>
       </div>
 
@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               name="username"
               class="form-control"
               placeholder="Enter your username"
-              value="admin_dang"
+              value="admin"
               required
               autocomplete="username">
           </div>
@@ -181,11 +181,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       <!-- Demo Hint -->
       <div class="login-hint">
-        <strong>Demo Accounts:</strong><br>
-        🔑 Admin: <kbd>admin_dang</kbd> / <kbd>admin123</kbd><br>
-        📊 Manager: <kbd>mgr_maianh</kbd> / <kbd>manager123</kbd> &nbsp;|&nbsp;<br>
-        💰 Accountant: <kbd>acc_mchen</kbd> / <kbd>accountant123</kbd><br>
-        🚛 Operations: <kbd>ops_sarah</kbd> / <kbd>ops123</kbd>
+        <strong>Demo Credentials:</strong><br>
+        Admin: <kbd>admin</kbd> / <kbd>admin123</kbd> &nbsp;|&nbsp;
+        Ops: <kbd>ops</kbd> / <kbd>ops123</kbd><br>
+        Manager: <kbd>manager</kbd> / <kbd>manager123</kbd> &nbsp;|&nbsp;
+        Accountant: <kbd>accountant</kbd> / <kbd>accountant123</kbd>
       </div>
     </div>
   </section>

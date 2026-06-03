@@ -237,7 +237,7 @@
 .login-hint {
   font-size: var(--fs-xs);
   color: var(--text-muted);
-  text-align: left;
+  text-align: center;
   margin-top: 20px;
 }
 .login-hint kbd {

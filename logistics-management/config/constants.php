@@ -1,6 +1,6 @@
 <?php
 // ─── App Constants ───────────────────────────────────────────────────────────
-define('APP_NAME',    'LogiTrack Pro');
+define('APP_NAME',    'ITL Logistics Group');
 define('APP_VERSION', '1.0.0');
 define('BASE_URL',    '/logistics-management'); // subfolder on XAMPP
 
