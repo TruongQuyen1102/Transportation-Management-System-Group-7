@@ -89,8 +89,8 @@ $activePage = $activePage ?? '';
   <a href="javascript:void(0)" class="sidebar-logo">
     <div class="sidebar-logo-icon">🚚</div>
     <div class="sidebar-logo-text">
-      <span class="brand">LogiTrack</span>
-      <span class="tagline">Pro Edition</span>
+      <span class="brand">ITL Logistics Group</span>
+      <span class="tagline">Supply Chain Solutions</span>
     </div>
   </a>
 
@@ -119,7 +119,7 @@ $activePage = $activePage ?? '';
     <a href="<?= $b ?>/logout.php"
        class="nav-item"
        data-tooltip="Logout"
-       onclick="return confirm('Log out of LogiTrack Pro?')">
+       onclick="return confirm('Log out ?')">
       <span class="nav-icon">🚪</span>
       <span class="nav-label">Logout</span>
     </a>
@@ -134,7 +134,7 @@ $activePage = $activePage ?? '';
 
     <!-- Breadcrumb -->
     <div class="topbar-breadcrumb">
-      <span class="crumb">LogiTrack</span>
+      <span class="crumb">ITL Logistics Group</span>
       <span class="sep">›</span>
       <span class="crumb"><?= htmlspecialchars($roleLabelDisplay) ?></span>
       <?php foreach ($breadcrumbs as $crumb): ?>
