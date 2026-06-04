@@ -9,6 +9,8 @@
  *   $breadcrumbs  array   — [['label'=>'...','url'=>'...'], ...]
  */
 
+require_once __DIR__ . '/../config/db.php';
+
 $user = current_user();
 $role = current_role();
 
@@ -84,7 +86,7 @@ $navMenus = [
             ['key'=>'reports',       'icon'=>'📊', 'label'=>'Financial Reports', 'url'=>"$b/accountant/reports.php"],
             ['key'=>'aging',         'icon'=>'🔔', 'label'=>'Aging Debt',        'url'=>"$b/accountant/aging_debt.php",
              'badge'=> $badge_aging ?: null],
-            ['key'=>'carrier_costs', 'icon'=>'🚛', 'label'=>'Carrier Costs',     'url'=>"$b/accountant/carrier_costs.php"],
+            ['key'=>'carrier_costs', 'icon'=>'🚛', 'label'=>'Carrier Costs',     'url'=> BASE_URL . '/accountant/carrier_costs.php'],
         ],
     ],
 

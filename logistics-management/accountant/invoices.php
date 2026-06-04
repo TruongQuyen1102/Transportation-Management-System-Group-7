@@ -1,12 +1,135 @@
 <?php
 require_once __DIR__ . '/../includes/auth_check.php';
 require_once __DIR__ . '/../includes/page_shell.php';
+require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/sample_data.php';
 auth_require('accountant');
 
-$invoices  = get_invoices();
-$customers = get_customers();
-$orders    = get_orders();
+$db = get_db();
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['submit_action'])) {
+    $status      = in_array($_POST['submit_action'], ['ISSUED', 'DRAFT'], true) ? $_POST['submit_action'] : 'DRAFT';
+    $customerId  = isset($_POST['customer_id']) ? (int) $_POST['customer_id'] : 0;
+    $orderId     = isset($_POST['order_id']) ? (int) $_POST['order_id'] : 0;
+    $issueDate   = trim($_POST['issue_date'] ?? '');
+    $dueDate     = trim($_POST['due_date'] ?? '');
+    $currency    = trim($_POST['currency'] ?? 'VND');
+    $tax         = (float) ($_POST['tax'] ?? 0);
+    $notes       = trim($_POST['notes'] ?? '');
+    $chargeTypes = $_POST['charge_type'] ?? [];
+    $methods     = $_POST['method'] ?? [];
+    $qtys        = $_POST['qty'] ?? [];
+    $unitPrices  = $_POST['unit_price'] ?? [];
+
+    if ($customerId > 0 && $orderId > 0 && $issueDate !== '' && $dueDate !== '') {
+        $lineCount = min(count($chargeTypes), count($methods), count($qtys), count($unitPrices));
+        $totalPre = 0.0;
+        $lineItems = [];
+
+        for ($i = 0; $i < $lineCount; $i++) {
+            $qty = (float) $qtys[$i];
+            $unit = (float) $unitPrices[$i];
+            if ($qty <= 0 || $unit <= 0) {
+                continue;
+            }
+            $lineTotal = $qty * $unit;
+            $totalPre += $lineTotal;
+            $lineItems[] = [
+                'charge_type' => trim($chargeTypes[$i]),
+                'method'      => trim($methods[$i]),
+                'qty'         => $qty,
+                'unit_price'  => $unit,
+                'line_total'  => $lineTotal,
+            ];
+        }
+
+        if (!empty($lineItems)) {
+            $finalAmount = round($totalPre + ($totalPre * $tax / 100), 2);
+            $userId = (int) ($_SESSION['user']['id'] ?? 0);
+
+            $stmt = $db->prepare("INSERT INTO invoice (OrderID, BilledPartyID, InvoiceType, UserID, TotalPreAmount, TaxRate, FinalAmount, IssueDate, Note) VALUES (?, ?, 'AR_Receivable', ?, ?, ?, ?, ?, ?)");
+            if ($stmt) {
+                $stmt->bind_param('iiidddss', $orderId, $customerId, $userId, $totalPre, $tax, $finalAmount, $issueDate, $notes);
+                if ($stmt->execute()) {
+                    $invoiceId = (int) $stmt->insert_id;
+                    $stmt->close();
+
+                    foreach ($lineItems as $line) {
+                        $billingId = null;
+                        $billingQuery = $db->prepare("SELECT BillingID FROM billing_structure WHERE ChargeType = ? LIMIT 1");
+                        if ($billingQuery) {
+                            $billingQuery->bind_param('s', $line['charge_type']);
+                            $billingQuery->execute();
+                            $billingResult = $billingQuery->get_result();
+                            $billingRow = $billingResult ? $billingResult->fetch_assoc() : null;
+                            $billingId = $billingRow['BillingID'] ?? null;
+                            $billingQuery->close();
+                        }
+
+                        if ($billingId !== null) {
+                            $insertLine = $db->prepare("INSERT INTO invoice_line (InvoiceID, BillingID, ChargeMethod, Quantity, UnitPrice, LineTotal) VALUES (?, ?, ?, ?, ?, ?)");
+                            $insertLine->bind_param('iisdid', $invoiceId, $billingId, $line['method'], $line['qty'], $line['unit_price'], $line['line_total']);
+                        } else {
+                            $insertLine = $db->prepare("INSERT INTO invoice_line (InvoiceID, ChargeMethod, Quantity, UnitPrice, LineTotal) VALUES (?, ?, ?, ?, ?)");
+                            $insertLine->bind_param('issdd', $invoiceId, $line['method'], $line['qty'], $line['unit_price'], $line['line_total']);
+                        }
+                        if ($insertLine) {
+                            $insertLine->execute();
+                            $insertLine->close();
+                        }
+                    }
+
+                    header('Location: /accountant/invoices.php?saved=1');
+                    exit;
+                }
+                $stmt->close();
+            }
+        }
+    }
+}
+
+function fetch_accountant_invoices(mysqli $db): array {
+  $sql = "SELECT i.InvoiceID AS id,
+                 i.OrderID,
+                 bp.PartyName AS customer,
+                 DATE_FORMAT(i.IssueDate, '%Y-%m-%d') AS issue_date,
+                 DATE_FORMAT(DATE_ADD(i.IssueDate, INTERVAL 30 DAY), '%Y-%m-%d') AS due_date,
+                 IFNULL(MIN(bs.currency), 'VND') AS currency,
+                 i.FinalAmount AS final,
+                 COALESCE(i.TaxRate, 0) AS tax,
+                 CASE WHEN EXISTS (SELECT 1 FROM payment_transaction pt2 WHERE pt2.InvoiceID = i.InvoiceID) THEN 'PAID'
+                      WHEN DATEDIFF(CURDATE(), i.IssueDate) > 30 THEN 'OVERDUE'
+                      ELSE 'ISSUED' END AS status
+          FROM invoice i
+          JOIN business_party bp ON i.BilledPartyID = bp.PartyID
+          LEFT JOIN invoice_line il ON il.InvoiceID = i.InvoiceID
+          LEFT JOIN billing_structure bs ON il.BillingID = bs.BillingID
+          WHERE i.InvoiceType = 'AR_Receivable'
+          GROUP BY i.InvoiceID, i.OrderID, bp.PartyName, i.IssueDate, i.FinalAmount, i.TaxRate
+          ORDER BY i.InvoiceID DESC";
+  $result = $db->query($sql);
+  return $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+}
+
+function fetch_accountant_customers(mysqli $db): array {
+  $result = $db->query("SELECT PartyID AS id, PartyName AS name FROM business_party WHERE PartyType = 'Customer' ORDER BY PartyName");
+  return $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+}
+
+function fetch_accountant_orders(mysqli $db): array {
+  $sql = "SELECT o.OrderID AS id,
+                 CONCAT('ORD', LPAD(o.OrderID, 3, '0')) AS number,
+                 bp.PartyName AS customer
+          FROM order_info o
+          LEFT JOIN business_party bp ON o.CustomerID = bp.PartyID
+          ORDER BY o.OrderID DESC";
+  $result = $db->query($sql);
+  return $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+}
+
+$invoices  = fetch_accountant_invoices($db);
+$customers = fetch_accountant_customers($db);
+$orders    = fetch_accountant_orders($db);
 
 $total   = count($invoices);
 $draft   = count(array_filter($invoices, fn($i) => $i['status'] === 'DRAFT'));
@@ -26,32 +149,37 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
     <button class="btn btn-accent" data-modal-open="modalCreateInvoice">＋ Create Invoice</button>
   </div>
 </div>
+<?php if (isset($_GET['saved']) && $_GET['saved'] === '1'): ?>
+<div class="alert alert-success" style="margin:16px 0 0; padding:14px 18px; border-radius:10px; background:#e6fbef; color:#0f7c44; border:1px solid #b9eed3;">
+  Invoice created successfully and saved into the database.
+</div>
+<?php endif; ?>
 
 <!-- Stats -->
 <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);">
   <div class="stat-card navy">
     <div class="stat-icon">🧾</div>
-    <div class="stat-value"><?= $total ?></div>
+    <div class="stat-value" id="statTotal"><?= $total ?></div>
     <div class="stat-label">Total Invoices</div>
   </div>
   <div class="stat-card slate">
     <div class="stat-icon">📝</div>
-    <div class="stat-value"><?= $draft ?></div>
+    <div class="stat-value" id="statDraft"><?= $draft ?></div>
     <div class="stat-label">Draft</div>
   </div>
   <div class="stat-card yellow">
     <div class="stat-icon">📤</div>
-    <div class="stat-value"><?= $issued ?></div>
+    <div class="stat-value" id="statIssued"><?= $issued ?></div>
     <div class="stat-label">Issued</div>
   </div>
   <div class="stat-card green">
     <div class="stat-icon">✅</div>
-    <div class="stat-value"><?= $paid ?></div>
+    <div class="stat-value" id="statPaid"><?= $paid ?></div>
     <div class="stat-label">Paid</div>
   </div>
   <div class="stat-card red">
     <div class="stat-icon">🔔</div>
-    <div class="stat-value"><?= $overdue ?></div>
+    <div class="stat-value" id="statOverdue"><?= $overdue ?></div>
     <div class="stat-label">Overdue</div>
   </div>
 </div>
@@ -108,7 +236,7 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
             <td>
               <a href="/accountant/invoice_detail.php?id=<?= $inv['id'] ?>" class="font-bold" style="color:var(--c-navy-800);"><?= $inv['id'] ?></a>
             </td>
-            <td class="td-muted"><?= $inv['order_id'] ?></td>
+            <td class="td-muted"><?= $inv['OrderID'] ?></td>
             <td class="font-bold"><?= htmlspecialchars($inv['customer']) ?></td>
             <td class="td-muted"><?= $inv['issue_date'] ?></td>
             <td class="td-muted <?= $inv['status'] === 'OVERDUE' ? 'text-danger font-bold' : '' ?>"><?= $inv['due_date'] ?></td>
@@ -140,7 +268,7 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
     </div>
   </div>
   <div class="card-footer">
-    <span class="text-muted">Showing <?= $total ?> invoices</span>
+    <span class="text-muted">Showing <span id="invoiceCountText"><?= $total ?></span> invoices</span>
   </div>
 </div>
 
@@ -152,11 +280,12 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
       <button class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <form data-feedback="Invoice created successfully!">
+      <form id="createInvoiceForm" method="POST" action="/accountant/invoices.php">
+        <input type="hidden" name="submit_action" value="DRAFT">
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Customer *</label>
-            <select class="form-control">
+            <select id="invoiceCustomer" name="customer_id" class="form-control">
               <option value="">— Select Customer —</option>
               <?php foreach ($customers as $c): ?>
               <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['name']) ?></option>
@@ -165,10 +294,10 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
           </div>
           <div class="form-group">
             <label class="form-label">Order ID *</label>
-            <select class="form-control">
+            <select id="invoiceOrder" name="order_id" class="form-control">
               <option value="">— Select Order —</option>
               <?php foreach ($orders as $o): ?>
-              <option value="<?= $o['id'] ?>"><?= $o['id'] ?> — <?= htmlspecialchars($o['customer']) ?></option>
+              <option value="<?= $o['id'] ?>"><?= htmlspecialchars($o['number']) ?> — <?= htmlspecialchars($o['customer']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -176,21 +305,21 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Issue Date *</label>
-            <input type="date" class="form-control" value="2025-05-29">
+            <input id="invoiceIssueDate" name="issue_date" type="date" class="form-control" value="2025-05-29">
           </div>
           <div class="form-group">
             <label class="form-label">Due Date *</label>
-            <input type="date" class="form-control" value="2025-06-29">
+            <input id="invoiceDueDate" name="due_date" type="date" class="form-control" value="2025-06-29">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Currency</label>
-            <select class="form-control"><option>VND</option><option>USD</option></select>
+            <select id="invoiceCurrency" name="currency" class="form-control"><option>VND</option><option>USD</option></select>
           </div>
           <div class="form-group">
             <label class="form-label">Tax Rate (%)</label>
-            <input type="number" class="form-control" value="10" min="0" max="100">
+            <input id="invoiceTax" name="tax" type="number" class="form-control" value="10" min="0" max="100">
           </div>
         </div>
         <!-- Billing Lines -->
@@ -208,14 +337,14 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
             </thead>
             <tbody id="billingLinesBody">
               <tr>
-                <td style="padding:6px;"><select class="form-control" style="font-size:12px;">
+                <td style="padding:6px;"><select name="charge_type[]" class="form-control" style="font-size:12px;">
                   <?php foreach (get_billing_structures() as $b): if (!$b['active']) continue; ?>
                   <option><?= htmlspecialchars($b['charge_type']) ?></option>
                   <?php endforeach; ?>
                 </select></td>
-                <td style="padding:6px;"><input type="text" class="form-control" style="font-size:12px;" value="Per KG"></td>
-                <td style="padding:6px;"><input type="number" class="form-control" style="font-size:12px;" value="1"></td>
-                <td style="padding:6px;"><input type="number" class="form-control" style="font-size:12px;" value="0"></td>
+                <td style="padding:6px;"><input name="method[]" type="text" class="form-control" style="font-size:12px;" value="Per KG"></td>
+                <td style="padding:6px;"><input name="qty[]" type="number" class="form-control" style="font-size:12px;" value="1"></td>
+                <td style="padding:6px;"><input name="unit_price[]" type="number" class="form-control" style="font-size:12px;" value="0"></td>
                 <td style="padding:6px;text-align:center;" class="td-muted">0</td>
               </tr>
             </tbody>
@@ -224,14 +353,14 @@ open_page('Invoices', 'invoices', [['label'=>'Invoices']]);
         </div>
         <div class="form-group">
           <label class="form-label">Notes</label>
-          <textarea class="form-control" rows="2" placeholder="Optional notes…"></textarea>
+          <textarea id="invoiceNotes" name="notes" class="form-control" rows="2" placeholder="Optional notes…"></textarea>
         </div>
       </form>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost modal-close">Cancel</button>
-      <button class="btn btn-secondary">Save Draft</button>
-      <button class="btn btn-primary">Issue Invoice</button>
+      <button type="button" class="btn btn-ghost modal-close">Cancel</button>
+      <button type="submit" class="btn btn-secondary" onclick="this.form.submit_action.value='DRAFT'">Save Draft</button>
+      <button type="submit" class="btn btn-primary" onclick="this.form.submit_action.value='ISSUED'">Issue Invoice</button>
     </div>
   </div>
 </div>
@@ -296,8 +425,159 @@ function addBillingLine() {
   const tbody = document.getElementById('billingLinesBody');
   const row = tbody.rows[0].cloneNode(true);
   row.querySelectorAll('input').forEach(i => i.value = '');
+  row.querySelectorAll('select').forEach(s => s.selectedIndex = 0);
+  row.querySelector('.td-muted').textContent = '0';
   tbody.appendChild(row);
 }
+
+function getNextInvoiceId() {
+  const rows = document.querySelectorAll('#invoiceTable tbody tr');
+  const next = rows.length + 1;
+  return 'INV' + String(next).padStart(3, '0');
+}
+
+function updateInvoiceStats() {
+  const rows = Array.from(document.querySelectorAll('#invoiceTable tbody tr'));
+  const counts = { total: rows.length, DRAFT: 0, ISSUED: 0, PAID: 0, OVERDUE: 0 };
+  rows.forEach(row => {
+    const status = row.dataset.status || '';
+    if (counts[status] !== undefined) counts[status]++;
+  });
+  document.getElementById('statTotal').textContent = counts.total;
+  document.getElementById('statDraft').textContent = counts.DRAFT;
+  document.getElementById('statIssued').textContent = counts.ISSUED;
+  document.getElementById('statPaid').textContent = counts.PAID;
+  document.getElementById('statOverdue').textContent = counts.OVERDUE;
+  const countText = document.getElementById('invoiceCountText');
+  if (countText) countText.textContent = counts.total;
+}
+
+function initDynamicRowInteractions(container = document) {
+  container.querySelectorAll('[data-dropdown-toggle]').forEach(btn => {
+    if (btn.dataset.initDropdown) return;
+    btn.dataset.initDropdown = '1';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = document.getElementById(btn.dataset.dropdownToggle);
+      if (!target) return;
+      const isOpen = target.classList.contains('open');
+      document.querySelectorAll('.dropdown-menu.open, .action-dropdown.open').forEach(m => m.classList.remove('open'));
+      if (!isOpen) target.classList.add('open');
+    });
+  });
+  container.querySelectorAll('[data-confirm]').forEach(btn => {
+    if (btn.dataset.initConfirm) return;
+    btn.dataset.initConfirm = '1';
+    btn.addEventListener('click', (e) => {
+      if (!confirm(btn.dataset.confirm || 'Are you sure?')) e.preventDefault();
+    });
+  });
+}
+
+function createInvoiceRow(data) {
+  const tbody = document.querySelector('#invoiceTable tbody');
+  const row = document.createElement('tr');
+  row.dataset.status = data.status;
+  row.dataset.customer = data.customer;
+  row.dataset.currency = data.currency;
+  const statusBadge = data.status === 'PAID'
+    ? '<span class="badge badge-green">Paid</span>'
+    : data.status === 'OVERDUE'
+      ? '<span class="badge badge-red">Overdue</span>'
+      : data.status === 'ISSUED'
+        ? '<span class="badge badge-yellow">Issued</span>'
+        : '<span class="badge badge-gray">Draft</span>';
+
+  row.innerHTML = `
+    <td>
+      <a href="/accountant/invoice_detail.php?id=${data.id}" class="font-bold" style="color:var(--c-navy-800);">${data.id}</a>
+    </td>
+    <td class="td-muted">${data.order_id}</td>
+    <td class="font-bold">${data.customer}</td>
+    <td class="td-muted">${data.issue_date}</td>
+    <td class="td-muted ${data.status === 'OVERDUE' ? 'text-danger font-bold' : ''}">${data.due_date}</td>
+    <td>${data.currency === 'USD' ? '<span class="badge badge-blue">USD</span>' : '<span class="badge badge-navy">VND</span>'}</td>
+    <td class="text-right font-bold">${data.amount}</td>
+    <td>${statusBadge}</td>
+    <td>
+      <div class="action-menu">
+        <button class="btn btn-ghost btn-sm action-menu-btn" data-dropdown-toggle="imenu-${data.id}">⋮</button>
+        <div class="action-dropdown" id="imenu-${data.id}">
+          <a href="/accountant/invoice_detail.php?id=${data.id}" class="dropdown-item">👁 View / Edit</a>
+          ${data.status !== 'PAID' ? '<a href="#" class="dropdown-item" data-modal-open="modalUpdatePayment">💳 Update Payment</a>' : ''}
+          ${data.status !== 'PAID' ? '<a href="#" class="dropdown-item danger" data-confirm="Cancel invoice ' + data.id + '?">🗑 Cancel Invoice</a>' : ''}
+        </div>
+      </div>
+    </td>
+  `;
+  tbody.appendChild(row);
+  initDynamicRowInteractions(row);
+  updateInvoiceStats();
+}
+
+function collectInvoiceForm() {
+  const customer = document.getElementById('invoiceCustomer').value;
+  const orderId = document.getElementById('invoiceOrder').value;
+  const issueDate = document.getElementById('invoiceIssueDate').value;
+  const dueDate = document.getElementById('invoiceDueDate').value;
+  const currency = document.getElementById('invoiceCurrency').value;
+  const tax = parseFloat(document.getElementById('invoiceTax').value) || 0;
+  const notes = document.getElementById('invoiceNotes').value;
+
+  if (!customer || !orderId || !issueDate || !dueDate) {
+    showToast('Error', 'Please complete all required invoice fields.', 'error');
+    return null;
+  }
+
+  const lineRows = Array.from(document.querySelectorAll('#billingLinesBody tr'));
+  const total = lineRows.reduce((sum, row) => {
+    const qty = parseFloat(row.querySelector('input[name="qty[]"]').value) || 0;
+    const unit = parseFloat(row.querySelector('input[name="unit_price[]"]').value) || 0;
+    return sum + qty * unit;
+  }, 0);
+
+  return {
+    id: getNextInvoiceId(),
+    order_id: orderId,
+    customer,
+    issue_date: issueDate,
+    due_date: dueDate,
+    currency,
+    final: total + total * (tax / 100),
+    amount: currency === 'USD' ? '$' + (total + total * (tax / 100)).toFixed(2) : new Intl.NumberFormat('en-US').format(total + total * (tax / 100)) + ' ₫',
+    status: 'DRAFT',
+    tax,
+    paid_date: null,
+    ref: null,
+    notes,
+  };
+}
+
+function resetCreateInvoiceForm() {
+  document.getElementById('createInvoiceForm').reset();
+  document.querySelectorAll('#billingLinesBody tr').forEach((row, index) => {
+    if (index > 0) row.remove();
+    else {
+      row.querySelector('input[name="qty[]"]').value = '1';
+      row.querySelector('input[name="unit_price[]"]').value = '0';
+      row.querySelector('.td-muted').textContent = '0';
+    }
+  });
+}
+
+const createButtons = document.querySelectorAll('[data-create-action]');
+createButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.createAction;
+    const payload = collectInvoiceForm();
+    if (!payload) return;
+    payload.status = action === 'ISSUED' ? 'ISSUED' : 'DRAFT';
+    createInvoiceRow(payload);
+    showToast(action === 'ISSUED' ? 'Invoice Issued' : 'Draft Saved', `Invoice ${payload.id} has been ${action === 'ISSUED' ? 'issued' : 'saved as draft'}.`, 'success');
+    document.getElementById('modalCreateInvoice')?.classList.remove('open');
+    resetCreateInvoiceForm();
+  });
+});
 </script>
 
 <?php close_page(); ?>

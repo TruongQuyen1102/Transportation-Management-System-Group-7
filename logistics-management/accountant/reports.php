@@ -36,7 +36,110 @@ $total_revenue_vnd = array_sum(array_column(array_filter($invoices, fn($i) => $i
 $total_cost_vnd    = array_sum(array_column($carrier_costs, 'total_payable'));
 $pl_vnd            = $total_revenue_vnd - $total_cost_vnd;
 
-open_page('Financial Reports', 'reports', [['label'=>'Finance'],['label'=>'Financial Reports']]);
+$revenueJson      = json_encode($revenue);
+$carrierLabelsJson= json_encode(array_keys($carrier_totals));
+$carrierTotalsJson= json_encode(array_values(array_column($carrier_totals,'total')));
+
+$extraScripts = [<<<JS
+const rev = $revenueJson;
+const carrierLabels = $carrierLabelsJson;
+const carrierTotals = $carrierTotalsJson;
+
+let activeChart = 'VND';
+
+const revenueChart = new Chart(document.getElementById('chartRevenue'), {
+  type: 'bar',
+  data: {
+    labels: rev.labels,
+    datasets: [{
+      label: 'Revenue (VND)',
+      data: rev.vnd,
+      backgroundColor: '#0C2840',
+      borderRadius: 5,
+      borderSkipped: false
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ` \${ctx.raw.toLocaleString()} ₫` } }
+    },
+    scales: {
+      y: { ticks: { callback: v => (v/1000000).toFixed(0)+'M' }, grid: { color: 'rgba(0,0,0,0.05)' } },
+      x: { grid: { display: false } }
+    }
+  }
+});
+
+function switchCurrency(cur) {
+  const isVND = cur === 'VND';
+  revenueChart.data.datasets[0].data  = isVND ? rev.vnd : rev.usd;
+  revenueChart.data.datasets[0].label = isVND ? 'Revenue (VND)' : 'Revenue (USD)';
+  revenueChart.options.scales.y.ticks.callback = isVND
+    ? v => (v/1000000).toFixed(0)+'M ₫'
+    : v => '$'+v.toLocaleString();
+  revenueChart.update();
+  document.getElementById('btnVND').className = isVND ? 'btn btn-ghost btn-sm' : 'btn btn-outline btn-sm';
+  document.getElementById('btnUSD').className = isVND ? 'btn btn-outline btn-sm' : 'btn btn-ghost btn-sm';
+}
+
+new Chart(document.getElementById('chartCarrierCost'), {
+  type: 'bar',
+  data: {
+    labels: carrierLabels,
+    datasets: [{
+      label: 'Total Payable (VND)',
+      data: carrierTotals,
+      backgroundColor: ['#0C2840','#3A5361','#E8B84B'],
+      borderRadius: 5
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ` \${ctx.raw.toLocaleString()} ₫` } }
+    },
+    scales: {
+      y: { ticks: { callback: v => (v/1000000).toFixed(0)+'M ₫' }, grid: { color: 'rgba(0,0,0,0.05)' } },
+      x: { grid: { display: false } }
+    }
+  }
+});
+
+const costs = [38000000, 44000000, 41000000, 51000000, 54000000, 40560000];
+new Chart(document.getElementById('chartPL'), {
+  type: 'line',
+  data: {
+    labels: rev.labels,
+    datasets: [
+      {
+        label: 'Revenue', data: rev.vnd,
+        borderColor: '#6B8C3E', backgroundColor: 'rgba(107,140,62,0.1)',
+        tension: 0.3, fill: true, pointRadius: 4
+      },
+      {
+        label: 'Costs', data: costs,
+        borderColor: '#C0392B', backgroundColor: 'rgba(192,57,43,0.07)',
+        tension: 0.3, fill: true, pointRadius: 4
+      }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top' },
+      tooltip: { callbacks: { label: ctx => ` \${ctx.dataset.label}: \${ctx.raw.toLocaleString()} ₫` } }
+    },
+    scales: {
+      y: { ticks: { callback: v => (v/1000000).toFixed(0)+'M ₫' }, grid: { color: 'rgba(0,0,0,0.05)' } },
+      x: { grid: { display: false } }
+    }
+  }
+});
+JS
+];
+
+open_page('Financial Reports', 'reports', [['label'=>'Finance'],['label'=>'Financial Reports']], $extraScripts);
 ?>
 
 <div class="page-header">
@@ -243,104 +346,5 @@ open_page('Financial Reports', 'reports', [['label'=>'Finance'],['label'=>'Finan
     </div>
   </div>
 </div>
-
-<script>
-const rev = <?= json_encode($revenue) ?>;
-const carrierLabels = <?= json_encode(array_keys($carrier_totals)) ?>;
-const carrierTotals = <?= json_encode(array_values(array_column($carrier_totals,'total'))) ?>;
-
-let activeChart = 'VND';
-
-const revenueChart = new Chart(document.getElementById('chartRevenue'), {
-  type: 'bar',
-  data: {
-    labels: rev.labels,
-    datasets: [{
-      label: 'Revenue (VND)',
-      data: rev.vnd,
-      backgroundColor: '#0C2840',
-      borderRadius: 5,
-      borderSkipped: false
-    }]
-  },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false },
-      tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} ₫` } }
-    },
-    scales: {
-      y: { ticks: { callback: v => (v/1000000).toFixed(0)+'M' }, grid: { color: 'rgba(0,0,0,0.05)' } },
-      x: { grid: { display: false } }
-    }
-  }
-});
-
-function switchCurrency(cur) {
-  const isVND = cur === 'VND';
-  revenueChart.data.datasets[0].data  = isVND ? rev.vnd : rev.usd;
-  revenueChart.data.datasets[0].label = isVND ? 'Revenue (VND)' : 'Revenue (USD)';
-  revenueChart.options.scales.y.ticks.callback = isVND
-    ? v => (v/1000000).toFixed(0)+'M ₫'
-    : v => '$'+v.toLocaleString();
-  revenueChart.update();
-  document.getElementById('btnVND').className = isVND ? 'btn btn-ghost btn-sm' : 'btn btn-outline btn-sm';
-  document.getElementById('btnUSD').className = isVND ? 'btn btn-outline btn-sm' : 'btn btn-ghost btn-sm';
-}
-
-new Chart(document.getElementById('chartCarrierCost'), {
-  type: 'bar',
-  data: {
-    labels: carrierLabels,
-    datasets: [{
-      label: 'Total Payable (VND)',
-      data: carrierTotals,
-      backgroundColor: ['#0C2840','#3A5361','#E8B84B'],
-      borderRadius: 5
-    }]
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false },
-      tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} ₫` } }
-    },
-    scales: {
-      y: { ticks: { callback: v => (v/1000000).toFixed(0)+'M ₫' }, grid: { color: 'rgba(0,0,0,0.05)' } },
-      x: { grid: { display: false } }
-    }
-  }
-});
-
-// P&L chart (revenue vs cost approximation)
-const costs = [38000000, 44000000, 41000000, 51000000, 54000000, 40560000];
-new Chart(document.getElementById('chartPL'), {
-  type: 'line',
-  data: {
-    labels: rev.labels,
-    datasets: [
-      {
-        label: 'Revenue', data: rev.vnd,
-        borderColor: '#6B8C3E', backgroundColor: 'rgba(107,140,62,0.1)',
-        tension: 0.3, fill: true, pointRadius: 4
-      },
-      {
-        label: 'Costs', data: costs,
-        borderColor: '#C0392B', backgroundColor: 'rgba(192,57,43,0.07)',
-        tension: 0.3, fill: true, pointRadius: 4
-      }
-    ]
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { position: 'top' },
-      tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw.toLocaleString()} ₫` } }
-    },
-    scales: {
-      y: { ticks: { callback: v => (v/1000000).toFixed(0)+'M ₫' }, grid: { color: 'rgba(0,0,0,0.05)' } },
-      x: { grid: { display: false } }
-    }
-  }
-});
-</script>
 
 <?php close_page(); ?>

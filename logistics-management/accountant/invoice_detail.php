@@ -1,13 +1,81 @@
 <?php
 require_once __DIR__ . '/../includes/auth_check.php';
 require_once __DIR__ . '/../includes/page_shell.php';
-require_once __DIR__ . '/../config/sample_data.php';
+require_once __DIR__ . '/../config/db.php';
 auth_require('accountant');
 
-$invoices = get_invoices();
-// Show INV001 as the sample invoice
-$inv   = $invoices[0]; // INV001
-$lines = get_invoice_lines('INV001');
+$db = get_db();
+$invoiceId = intval($_GET['id'] ?? 0);
+if ($invoiceId <= 0) {
+    header('Location: /accountant/invoices.php');
+    exit;
+}
+
+$invResult = $db->query(
+    "SELECT i.InvoiceID AS id,
+            CONCAT('ORD', LPAD(i.OrderID, 3, '0')) AS order_id,
+            bp.PartyName AS customer,
+            bp.Address AS address,
+            bp.ContactEmail AS email,
+            bp.Phone AS phone,
+            DATE_FORMAT(i.IssueDate, '%Y-%m-%d') AS issue_date,
+            DATE_FORMAT(DATE_ADD(i.IssueDate, INTERVAL 30 DAY), '%Y-%m-%d') AS due_date,
+            IFNULL(MIN(bs.currency), 'VND') AS currency,
+            COALESCE(i.TaxRate, 0) AS tax,
+            i.FinalAmount AS final,
+            i.Note AS note,
+            CASE WHEN EXISTS (SELECT 1 FROM payment_transaction pt WHERE pt.InvoiceID = i.InvoiceID) THEN 'PAID'
+                 WHEN DATEDIFF(CURDATE(), i.IssueDate) > 30 THEN 'OVERDUE'
+                 ELSE 'ISSUED' END AS status
+     FROM invoice i
+     LEFT JOIN business_party bp ON i.BilledPartyID = bp.PartyID
+     LEFT JOIN invoice_line il ON il.InvoiceID = i.InvoiceID
+     LEFT JOIN billing_structure bs ON il.BillingID = bs.BillingID
+     WHERE i.InvoiceID = {$invoiceId}
+     GROUP BY i.InvoiceID, i.OrderID, bp.PartyName, bp.Address, bp.ContactEmail, bp.Phone, i.IssueDate, i.TaxRate, i.FinalAmount, i.Note"
+);
+
+$inv = $invResult ? $invResult->fetch_assoc() : null;
+if (!$inv) {
+    header('Location: /accountant/invoices.php');
+    exit;
+}
+
+$lines = [];
+$lineResult = $db->query(
+    "SELECT il.LineID,
+            IFNULL(bs.ChargeType, il.ChargeMethod) AS billing,
+            il.ChargeMethod AS method,
+            il.Quantity AS qty,
+            il.UnitPrice AS unit_price,
+            il.LineTotal AS total
+     FROM invoice_line il
+     LEFT JOIN billing_structure bs ON il.BillingID = bs.BillingID
+     WHERE il.InvoiceID = {$invoiceId}
+     ORDER BY il.LineID"
+);
+if ($lineResult) {
+    while ($row = $lineResult->fetch_assoc()) {
+        $lines[] = $row;
+    }
+}
+
+$payments = [];
+$paymentResult = $db->query(
+    "SELECT PaymentID, ReferenceCode AS ref,
+            DATE_FORMAT(PaymentDate, '%Y-%m-%d') AS date,
+            AmountPaid AS amount
+     FROM payment_transaction
+     WHERE InvoiceID = {$invoiceId}
+     ORDER BY PaymentDate DESC"
+);
+if ($paymentResult) {
+    while ($row = $paymentResult->fetch_assoc()) {
+        $payments[] = $row;
+    }
+}
+
+$paymentMeta = $payments[0] ?? null;
 
 $subtotal = array_sum(array_column($lines, 'total'));
 $tax_amt  = $subtotal * ($inv['tax'] / 100);
@@ -95,11 +163,11 @@ open_page('Invoice Detail — ' . $inv['id'], 'invoices', [
         </div>
         <div class="info-row">
           <span class="info-label">Payment Ref</span>
-          <span class="info-value font-bold" style="color:var(--c-green);"><?= $inv['ref'] ?? '—' ?></span>
+          <span class="info-value font-bold" style="color:var(--c-green);"><?= $paymentMeta['ref'] ?? '—' ?></span>
         </div>
         <div class="info-row">
           <span class="info-label">Paid Date</span>
-          <span class="info-value"><?= $inv['paid_date'] ?? '—' ?></span>
+          <span class="info-value"><?= $paymentMeta['date'] ?? '—' ?></span>
         </div>
       </div>
     </div>
@@ -157,7 +225,7 @@ open_page('Invoice Detail — ' . $inv['id'], 'invoices', [
 <div class="card mt-16">
   <div class="card-header"><span class="card-title">Payment History</span></div>
   <div class="card-body" style="padding:0;">
-    <?php if ($inv['status'] === 'PAID' && $inv['ref']): ?>
+    <?php if (!empty($payments)): ?>
     <div class="table-wrapper">
       <table>
         <thead>
@@ -170,13 +238,15 @@ open_page('Invoice Detail — ' . $inv['id'], 'invoices', [
           </tr>
         </thead>
         <tbody>
+          <?php foreach ($payments as $payment): ?>
           <tr>
-            <td class="font-bold"><?= $inv['ref'] ?></td>
-            <td class="td-muted"><?= $inv['paid_date'] ?></td>
+            <td class="font-bold"><?= htmlspecialchars($payment['ref']) ?></td>
+            <td class="td-muted"><?= htmlspecialchars($payment['date']) ?></td>
             <td>Bank Transfer</td>
-            <td class="text-right font-bold text-success"><?= fmt_currency($inv['final'], $inv['currency']) ?></td>
+            <td class="text-right font-bold text-success"><?= fmt_currency((float)$payment['amount'], $inv['currency']) ?></td>
             <td><?= status_badge('PAID') ?></td>
           </tr>
+          <?php endforeach; ?>
         </tbody>
       </table>
     </div>
