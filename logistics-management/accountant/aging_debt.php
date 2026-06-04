@@ -1,11 +1,36 @@
 <?php
 require_once __DIR__ . '/../includes/auth_check.php';
 require_once __DIR__ . '/../includes/page_shell.php';
-require_once __DIR__ . '/../config/sample_data.php';
+require_once __DIR__ . '/../config/db.php';
 auth_require('accountant');
 
-$invoices = get_invoices();
-$today = '2025-05-29';
+$db = get_db();
+$invoices = [];
+$invoiceResult = $db->query(
+    "SELECT i.InvoiceID AS id,
+            CONCAT('ORD', LPAD(i.OrderID, 3, '0')) AS order_id,
+            bp.PartyName AS customer,
+            DATE_FORMAT(i.IssueDate, '%Y-%m-%d') AS issue_date,
+            DATE_FORMAT(DATE_ADD(i.IssueDate, INTERVAL 30 DAY), '%Y-%m-%d') AS due_date,
+            IFNULL(MIN(bs.Currency), 'VND') AS currency,
+            i.FinalAmount AS final,
+            COALESCE(i.TaxRate, 0) AS tax,
+            CASE WHEN EXISTS (SELECT 1 FROM payment_transaction pt WHERE pt.InvoiceID = i.InvoiceID) THEN 'PAID'
+                 WHEN DATEDIFF(CURDATE(), i.IssueDate) > 30 THEN 'OVERDUE'
+                 ELSE 'ISSUED' END AS status
+     FROM invoice i
+     LEFT JOIN business_party bp ON i.BilledPartyID = bp.PartyID
+     LEFT JOIN invoice_line il ON il.InvoiceID = i.InvoiceID
+     LEFT JOIN billing_structure bs ON il.BillingID = bs.BillingID
+     WHERE i.InvoiceType = 'AR_Receivable'
+     GROUP BY i.InvoiceID, i.OrderID, bp.PartyName, i.IssueDate, i.FinalAmount, i.TaxRate"
+);
+if ($invoiceResult) {
+    while ($row = $invoiceResult->fetch_assoc()) {
+        $invoices[] = $row;
+    }
+}
+$today = date('Y-m-d');
 
 // Build aging table
 $aging = [];
