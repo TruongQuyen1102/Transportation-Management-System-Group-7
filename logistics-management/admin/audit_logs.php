@@ -1,20 +1,58 @@
 <?php
 require_once __DIR__ . '/../includes/auth_check.php';
 require_once __DIR__ . '/../includes/page_shell.php';
-require_once __DIR__ . '/../config/sample_data.php';
+require_once __DIR__ . '/../config/db.php';
 auth_require('admin');
 
-$audit_logs = get_audit_logs();
-$accounts   = get_demo_accounts();
+$db = get_db();
 
-// Compute stats
-$total_actions   = count($audit_logs);
-$creates  = count(array_filter($audit_logs, fn($l) => $l['action'] === 'CREATE'));
-$updates  = count(array_filter($audit_logs, fn($l) => $l['action'] === 'UPDATE'));
-$resets   = count(array_filter($audit_logs, fn($l) => $l['action'] === 'RESET_PASSWORD'));
-$deletes  = count(array_filter($audit_logs, fn($l) => $l['action'] === 'DELETE'));
+// ══════════════════════════════════════════════════════════════════════════════
+//  LẤY DỮ LIỆU TỪ BẢNG system_audit_log
+//  JOIN thêm account, employee, role để hiển thị đầy đủ thông tin người thao tác.
+// ══════════════════════════════════════════════════════════════════════════════
+$sql = "
+    SELECT
+        sal.LogID,
+        CONCAT('AUD', LPAD(sal.LogID, 3, '0'))  AS AuditID,
+        e.FullName                              AS AccountName,
+        r.RoleName                              AS RoleName,
+        r.RoleID,
+        sal.ActionType                          AS Action,
+        sal.TableName                           AS TableName,
+        sal.RecordID                            AS RecordID,
+        sal.ActionTime                          AS EventTime,
+        sal.Description                         AS Description
+    FROM system_audit_log sal
+    JOIN account  a  ON sal.AccountID = a.AccountID
+    JOIN employee e  ON a.EmployeeID = e.EmployeeID
+    JOIN role     r  ON a.RoleID     = r.RoleID
+    ORDER BY sal.ActionTime DESC
+";
+$result    = $db->query($sql);
+$audit_logs = [];
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $audit_logs[] = $row;
+    }
+}
 
-$account_names = array_unique(array_column($audit_logs, 'account'));
+// ── Tính stats ───────────────────────────────────────────────────────────────
+$total_actions = count($audit_logs);
+$create_count  = count(array_filter($audit_logs, fn($l) => strtoupper($l['Action']) === 'CREATE'));
+$update_count  = count(array_filter($audit_logs, fn($l) => strtoupper($l['Action']) === 'UPDATE'));
+$delete_count  = count(array_filter($audit_logs, fn($l) => strtoupper($l['Action']) === 'DELETE'));
+
+// Danh sách tài khoản duy nhất cho filter
+$account_names = array_unique(array_column($audit_logs, 'AccountName'));
+sort($account_names);
+
+// Đếm theo tài khoản (cho chart)
+$account_counts = [];
+foreach ($audit_logs as $log) {
+    $k = $log['AccountName'];
+    $account_counts[$k] = ($account_counts[$k] ?? 0) + 1;
+}
+arsort($account_counts);
 
 open_page('Audit Logs', 'audit', [['label' => 'Administration'], ['label' => 'Audit Logs']]);
 ?>
@@ -22,7 +60,9 @@ open_page('Audit Logs', 'audit', [['label' => 'Administration'], ['label' => 'Au
 <div class="page-header">
   <div>
     <h1 class="page-title">System Audit Logs</h1>
-    <p class="text-muted" style="margin-top:4px;">Complete trail of all system actions performed by users</p>
+    <p class="text-muted" style="margin-top:4px;">
+      Complete trail of all system actions performed by users
+    </p>
   </div>
   <div class="page-actions">
     <button class="btn btn-outline btn-sm">📥 Export CSV</button>
@@ -30,48 +70,54 @@ open_page('Audit Logs', 'audit', [['label' => 'Administration'], ['label' => 'Au
   </div>
 </div>
 
-<!-- ── Stats ──────────────────────────────────────────────────────────────── -->
 <div class="stats-grid">
   <div class="stat-card navy">
     <div class="stat-icon">📋</div>
     <div class="stat-value"><?= $total_actions ?></div>
     <div class="stat-label">Total Actions</div>
-    <div class="stat-trend">All time</div>
+    <div class="stat-trend">All time records</div>
   </div>
   <div class="stat-card green">
     <div class="stat-icon">➕</div>
-    <div class="stat-value"><?= $creates ?></div>
-    <div class="stat-label">Creates</div>
-    <div class="stat-trend"><?= round($creates / $total_actions * 100) ?>% of total</div>
-  </div>
-  <div class="stat-card slate">
-    <div class="stat-icon">✏️</div>
-    <div class="stat-value"><?= $updates ?></div>
-    <div class="stat-label">Updates</div>
-    <div class="stat-trend"><?= round($updates / $total_actions * 100) ?>% of total</div>
+    <div class="stat-value"><?= $create_count ?></div>
+    <div class="stat-label">CREATE (Thêm mới)</div>
+    <div class="stat-trend">
+      <?= $total_actions > 0 ? round($create_count / $total_actions * 100) : 0 ?>% of total
+    </div>
   </div>
   <div class="stat-card yellow">
-    <div class="stat-icon">🔑</div>
-    <div class="stat-value"><?= $resets ?></div>
-    <div class="stat-label">Password Resets</div>
-    <div class="stat-trend">Administrative actions</div>
+    <div class="stat-icon">✏️</div>
+    <div class="stat-value"><?= $update_count ?></div>
+    <div class="stat-label">UPDATE (Cập nhật)</div>
+    <div class="stat-trend">
+      <?= $total_actions > 0 ? round($update_count / $total_actions * 100) : 0 ?>% of total
+    </div>
+  </div>
+  <div class="stat-card red">
+    <div class="stat-icon">🗑️</div>
+    <div class="stat-value"><?= $delete_count ?></div>
+    <div class="stat-label">DELETE (Xóa)</div>
+    <div class="stat-trend">
+      <?= $total_actions > 0 ? round($delete_count / $total_actions * 100) : 0 ?>% of total
+    </div>
   </div>
 </div>
 
-<!-- ── Filter Bar ─────────────────────────────────────────────────────────── -->
-<div class="card mt-24">
-  <div class="table-toolbar">
-    <div class="search-input-wrapper">
-      <span>🔍</span>
-      <input type="text" placeholder="Search description, record ID, account…" data-table-search="auditTable" class="form-control" style="border:none;box-shadow:none;padding-left:4px;">
+<div class="card mt-24" style="overflow:hidden;">
+
+  <div class="table-toolbar" style="padding:16px 20px; border-bottom:1px solid var(--border-color);">
+    <div class="search-input-wrapper" style="flex:1;">
+      <span class="search-icon">🔍</span>
+      <input type="text" placeholder="Search description, record ID, account…"
+             data-table-search="auditTable" class="form-control"
+             style="padding-left:32px; width:100%;">
     </div>
-    <div class="flex gap-8">
+    <div class="flex gap-8" style="flex-shrink:0;">
       <select class="form-control" id="filterAction" onchange="filterAudit()" style="min-width:160px;">
         <option value="">All Actions</option>
         <option value="CREATE">CREATE</option>
         <option value="UPDATE">UPDATE</option>
         <option value="DELETE">DELETE</option>
-        <option value="RESET_PASSWORD">RESET PASSWORD</option>
       </select>
       <select class="form-control" id="filterAccount" onchange="filterAudit()" style="min-width:180px;">
         <option value="">All Accounts</option>
@@ -79,20 +125,15 @@ open_page('Audit Logs', 'audit', [['label' => 'Administration'], ['label' => 'Au
           <option value="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($name) ?></option>
         <?php endforeach; ?>
       </select>
-      <select class="form-control" id="filterTable" onchange="filterAudit()" style="min-width:160px;">
-        <option value="">All Tables</option>
-        <?php
-          $tables = array_unique(array_column($audit_logs, 'table'));
-          foreach ($tables as $tbl): ?>
-          <option value="<?= htmlspecialchars($tbl) ?>"><?= htmlspecialchars($tbl) ?></option>
-        <?php endforeach; ?>
-      </select>
-      <input type="date" class="form-control" id="filterDateFrom" onchange="filterAudit()" title="From date" style="min-width:140px;">
-      <input type="date" class="form-control" id="filterDateTo"   onchange="filterAudit()" title="To date"   style="min-width:140px;">
+      <input type="date" class="form-control" id="filterDateFrom"
+             onchange="filterAudit()" title="From date" style="min-width:140px;">
+      <input type="date" class="form-control" id="filterDateTo"
+             onchange="filterAudit()" title="To date"   style="min-width:140px;">
       <button class="btn btn-ghost btn-sm" onclick="clearAuditFilters()">✕ Clear</button>
     </div>
   </div>
 
+  <div style="padding:0 20px;">
   <div class="table-wrapper">
     <table id="auditTable">
       <thead>
@@ -108,69 +149,87 @@ open_page('Audit Logs', 'audit', [['label' => 'Administration'], ['label' => 'Au
         </tr>
       </thead>
       <tbody>
-        <?php foreach (array_reverse($audit_logs) as $log): ?>
-          <?php
-            $action_map = [
-              'CREATE'         => ['color' => 'green',  'icon' => '➕'],
-              'UPDATE'         => ['color' => 'blue',   'icon' => '✏️'],
-              'DELETE'         => ['color' => 'red',    'icon' => '🗑'],
-              'RESET_PASSWORD' => ['color' => 'yellow', 'icon' => '🔑'],
-            ];
-            $am = $action_map[$log['action']] ?? ['color' => 'gray', 'icon' => '⚪'];
-            $role_badge = match($log['role']) {
-              'admin' => 'navy',
-              'mgr'   => 'slate',
-              'acc'   => 'olive',
-              'ops'   => 'green',
-              default => 'gray',
-            };
-            $role_label = match($log['role']) {
-              'admin' => 'Admin',
-              'mgr'   => 'Manager',
-              'acc'   => 'Accountant',
-              'ops'   => 'Operations',
-              default => strtoupper($log['role']),
-            };
-          ?>
-          <tr data-action="<?= $log['action'] ?>"
-              data-account="<?= htmlspecialchars($log['account']) ?>"
-              data-table-name="<?= htmlspecialchars($log['table']) ?>"
-              data-time="<?= htmlspecialchars($log['time']) ?>">
-            <td class="td-muted font-bold"><?= htmlspecialchars($log['id']) ?></td>
+        <?php foreach ($audit_logs as $log):
+          $actionUpper = strtoupper($log['Action']);
+          $action_map = [
+              'CREATE' => ['color' => 'green',  'icon' => '➕'],
+              'UPDATE' => ['color' => 'yellow', 'icon' => '✏️'],
+              'DELETE' => ['color' => 'red',    'icon' => '🗑️'],
+          ];
+          $am = $action_map[$actionUpper] ?? ['color' => 'gray', 'icon' => '⚪'];
+
+          $role_badge = match(strtolower($log['RoleName'])) {
+              'admin'           => 'navy',
+              'manager'         => 'slate',
+              'accountant'      => 'olive',
+              'operation staff' => 'green',
+              default           => 'gray',
+          };
+
+          $time_display = $log['EventTime'] ?? '';
+          $date_only    = substr($time_display, 0, 10);
+        ?>
+          <tr data-action="<?= htmlspecialchars($actionUpper) ?>"
+              data-account="<?= htmlspecialchars($log['AccountName']) ?>"
+              data-time="<?= htmlspecialchars($time_display) ?>">
+            <td class="td-muted font-bold"><?= htmlspecialchars($log['AuditID']) ?></td>
             <td>
-              <div style="font-weight:600;font-size:13px;"><?= htmlspecialchars($log['account']) ?></div>
+              <div style="font-weight:600;font-size:13px;">
+                <?= htmlspecialchars($log['AccountName']) ?>
+              </div>
             </td>
-            <td><span class="badge badge-<?= $role_badge ?>"><?= $role_label ?></span></td>
             <td>
-              <span class="badge badge-<?= $am['color'] ?>" style="display:inline-flex;align-items:center;gap:4px;">
-                <?= $am['icon'] ?> <?= str_replace('_', ' ', $log['action']) ?>
+              <span class="badge badge-<?= $role_badge ?>">
+                <?= htmlspecialchars($log['RoleName']) ?>
               </span>
             </td>
             <td>
-              <span style="font-size:12px;background:var(--bg-alt);padding:2px 8px;border-radius:4px;font-family:monospace;font-weight:600;">
-                <?= htmlspecialchars($log['table']) ?>
+              <span class="badge badge-<?= $am['color'] ?>"
+                    style="display:inline-flex;align-items:center;gap:4px;">
+                <?= $am['icon'] ?> <?= htmlspecialchars($actionUpper) ?>
               </span>
             </td>
-            <td class="td-muted font-bold"><?= htmlspecialchars($log['record_id']) ?></td>
-            <td class="td-muted" style="white-space:nowrap;font-size:12px;"><?= htmlspecialchars($log['time']) ?></td>
-            <td style="max-width:300px;font-size:13px;"><?= htmlspecialchars($log['desc']) ?></td>
+            <td>
+              <span style="font-size:12px;background:var(--bg-alt);padding:2px 8px;
+                           border-radius:4px;font-family:monospace;font-weight:600;">
+                <?= htmlspecialchars($log['TableName']) ?>
+              </span>
+            </td>
+            <td class="td-muted font-bold">#<?= htmlspecialchars($log['RecordID']) ?></td>
+            <td class="td-muted" style="white-space:nowrap;font-size:12px;">
+              <?= htmlspecialchars($time_display) ?>
+            </td>
+            <td style="max-width:300px;font-size:13px;">
+              <?= htmlspecialchars($log['Description']) ?>
+            </td>
           </tr>
         <?php endforeach; ?>
+
+        <?php if (empty($audit_logs)): ?>
+          <tr>
+            <td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">
+              📭 Chưa có dữ liệu audit log nào.
+            </td>
+          </tr>
+        <?php endif; ?>
       </tbody>
     </table>
   </div>
+  </div>
 
   <div class="card-footer flex-between">
-    <span class="text-muted" style="font-size:13px;" id="auditCount">Showing <?= $total_actions ?> entries</span>
+    <span class="text-muted" style="font-size:13px;" id="auditCount">
+      Showing <?= $total_actions ?> entries
+    </span>
     <div class="pagination">
       <button class="btn btn-ghost btn-sm" disabled>‹ Prev</button>
       <button class="btn btn-primary btn-sm">1</button>
       <button class="btn btn-ghost btn-sm" disabled>Next ›</button>
     </div>
   </div>
+
 </div>
 
-<!-- ── Action Breakdown Chart ─────────────────────────────────────────────── -->
 <div class="grid-2 mt-24">
 
   <div class="card">
@@ -196,9 +255,8 @@ open_page('Audit Logs', 'audit', [['label' => 'Administration'], ['label' => 'Au
 <script>
 // ── Filter Logic ─────────────────────────────────────────────────────────────
 function filterAudit() {
-  const action  = document.getElementById('filterAction').value;
-  const account = document.getElementById('filterAccount').value;
-  const table   = document.getElementById('filterTable').value;
+  const action   = document.getElementById('filterAction').value;
+  const account  = document.getElementById('filterAccount').value;
   const dateFrom = document.getElementById('filterDateFrom').value;
   const dateTo   = document.getElementById('filterDateTo').value;
 
@@ -208,12 +266,10 @@ function filterAudit() {
   rows.forEach(row => {
     const rAction  = row.dataset.action  || '';
     const rAccount = row.dataset.account || '';
-    const rTable   = row.dataset.tableName || '';
     const rTime    = row.dataset.time    || '';
 
     const matchAction  = !action  || rAction  === action;
     const matchAccount = !account || rAccount === account;
-    const matchTable   = !table   || rTable   === table;
 
     let matchDate = true;
     if (dateFrom || dateTo) {
@@ -222,7 +278,7 @@ function filterAudit() {
       if (dateTo   && rowDate > dateTo)   matchDate = false;
     }
 
-    const show = matchAction && matchAccount && matchTable && matchDate;
+    const show = matchAction && matchAccount && matchDate;
     row.style.display = show ? '' : 'none';
     if (show) visible++;
   });
@@ -231,22 +287,23 @@ function filterAudit() {
 }
 
 function clearAuditFilters() {
-  ['filterAction','filterAccount','filterTable','filterDateFrom','filterDateTo'].forEach(id => {
+  ['filterAction', 'filterAccount', 'filterDateFrom', 'filterDateTo'].forEach(id => {
     document.getElementById(id).value = '';
   });
   filterAudit();
 }
 
 // ── Charts ───────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function() {
-  // Action Type Doughnut
+document.addEventListener('DOMContentLoaded', function () {
+
+  // Doughnut: Action type
   new Chart(document.getElementById('actionChart'), {
     type: 'doughnut',
     data: {
-      labels: ['CREATE', 'UPDATE', 'DELETE', 'RESET PASSWORD'],
+      labels: ['CREATE (Thêm mới)', 'UPDATE (Cập nhật)', 'DELETE (Xóa)'],
       datasets: [{
-        data: [<?= $creates ?>, <?= $updates ?>, <?= $deletes ?>, <?= $resets ?>],
-        backgroundColor: ['#6B8C3E', '#3A5361', '#C0392B', '#E8B84B'],
+        data: [<?= $create_count ?>, <?= $update_count ?>, <?= $delete_count ?>],
+        backgroundColor: ['#6B8C3E', '#E8B84B', '#C0392B'],
         borderWidth: 2,
         borderColor: '#fff',
       }]
@@ -255,25 +312,26 @@ document.addEventListener('DOMContentLoaded', function() {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { font: { family: 'Montserrat', size: 12 } } }
+        legend: {
+          position: 'right',
+          labels: { font: { family: 'Montserrat', size: 12 } }
+        }
       }
     }
   });
 
-  // Activity by Account Bar
-  <?php
-    $account_counts = array_count_values(array_column($audit_logs, 'account'));
-    arsort($account_counts);
-    $ac_labels = json_encode(array_keys($account_counts));
-    $ac_data   = json_encode(array_values($account_counts));
-  ?>
+  // Bar: Activity by account
+  const acLabels = <?= json_encode(array_keys($account_counts)) ?>;
+  const acData   = <?= json_encode(array_values($account_counts)) ?>;
+  const maxVal   = Math.max(...acData, 1);
+
   new Chart(document.getElementById('accountChart'), {
     type: 'bar',
     data: {
-      labels: <?= $ac_labels ?>,
+      labels: acLabels,
       datasets: [{
         label: 'Actions',
-        data: <?= $ac_data ?>,
+        data: acData,
         backgroundColor: '#0C2840',
         borderRadius: 6,
       }]
@@ -284,11 +342,19 @@ document.addEventListener('DOMContentLoaded', function() {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { font: { family: 'Montserrat', size: 10 } } },
-        y: { beginAtZero: true, ticks: { stepSize: 1, font: { family: 'Montserrat', size: 11 } } }
+        y: {
+          beginAtZero: true,
+          max: maxVal + 1,
+          ticks: { stepSize: 1, font: { family: 'Montserrat', size: 11 } }
+        }
       }
     }
   });
+
 });
 </script>
 
-<?php close_page(); ?>
+<?php
+close_page();
+$db->close();
+?>

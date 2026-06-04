@@ -1,9 +1,9 @@
 <?php
 session_start();
 require_once __DIR__ . '/config/constants.php';
-require_once __DIR__ . '/config/sample_data.php';
+require_once __DIR__ . '/config/db.php';
 
-// Redirect if already logged in
+// Redirect if user already logged in
 if (!empty($_SESSION['user'])) {
     global $ROLE_HOME;
     header('Location: ' . ($ROLE_HOME[$_SESSION['user']['role']] ?? BASE_URL . '/index.php'));
@@ -15,26 +15,70 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = trim($_POST['password'] ?? '');
-    $role     = trim($_POST['role'] ?? '');
+    $role     = trim($_POST['role'] ?? ''); // Receive from form: 'admin', 'manager', 'accountant', 'operations'
 
-    foreach (get_demo_accounts() as $account) {
-        if ($account['username'] === $username
-            && $account['password'] === $password
-            && $account['role'] === $role
-            && $account['status'] === 'active') {
+    // Initialize MySQLi connection as in users.php
+    $db = get_db(); 
 
-            $_SESSION['user'] = [
-                'id'     => $account['id'],
-                'name'   => $account['name'],
-                'email'  => $account['email'],
-                'role'   => $account['role'],
-                'avatar' => $account['avatar'],
-            ];
-            header('Location: ' . $ROLE_HOME[$account['role']]);
-            exit;
+    // Map from UI slug to standard RoleName in Database
+    $role_mapping = [
+        'admin'      => 'Admin',
+        'manager'    => 'Manager',
+        'accountant' => 'Accountant',
+        'operations' => 'Operation Staff'
+    ];
+
+    $db_role_name = $role_mapping[$role] ?? '';
+
+    // Query account information with employee data and role name
+    $stmt = $db->prepare("
+        SELECT 
+            a.AccountID, 
+            a.PasswordHash, 
+            a.Status, 
+            e.FullName, 
+            e.ContactEmail
+        FROM account a
+        JOIN employee e ON a.EmployeeID = e.EmployeeID
+        JOIN role r     ON a.RoleID     = r.RoleID
+        WHERE a.Username = ? AND r.RoleName = ?
+    ");
+
+    if ($stmt) {
+        $stmt->bind_param('ss', $username, $db_role_name);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($account = $result->fetch_assoc()) {
+            // 1. Kiểm tra trạng thái kích hoạt của tài khoản
+            if (strtolower($account['Status']) !== 'active') {
+                $error = 'Tài khoản của bạn đã bị Khóa hoặc Vô hiệu hóa liên hệ Admin.';
+            } 
+            // 2. Xác thực mật khẩu thông qua hàm Verify Hash Bcrypt chuẩn
+            elseif (password_verify($password, $account['PasswordHash'])) {
+                
+                // Khởi tạo thông tin Session chuẩn để đồng bộ toàn bộ hệ thống Layout Shell
+                $_SESSION['user'] = [
+                    'id'     => $account['AccountID'],
+                    'name'   => $account['FullName'],
+                    'email'  => $account['ContactEmail'],
+                    'role'   => $role, // Giữ nguyên slug thường ('admin', 'operations') để biến hệ thống $ROLE_HOME chuyển hướng chuẩn
+                    'avatar' => mb_strtoupper(mb_substr($account['FullName'], 0, 1)) // Lấy chữ cái đầu làm Avatar mặc định
+                ];
+
+                global $ROLE_HOME;
+                header('Location: ' . ($ROLE_HOME[$role] ?? BASE_URL . '/index.php'));
+                exit;
+            } else {
+                $error = 'Mật khẩu nhập vào không chính xác. Vui lòng thử lại.';
+            }
+        } else {
+            $error = 'Không tìm thấy tài khoản tương ứng với vai trò đã chọn.';
         }
+        $stmt->close();
+    } else {
+        $error = 'Hệ thống đang gặp sự cố kết nối dữ liệu.';
     }
-    $error = 'Invalid credentials or account is inactive. Please check your username, password, and role selection.';
 }
 ?>
 <!DOCTYPE html>
@@ -54,11 +98,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <div class="login-page">
 
-  <!-- ── Left Hero ──────────────────────────────────────────────────────── -->
   <section class="login-hero">
     <div class="hero-bg-pattern"></div>
     <div class="hero-gradient"></div>
-    <!-- Truck silhouette via CSS/SVG -->
     <svg class="hero-truck-img" viewBox="0 0 900 400" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect x="0" y="220" width="560" height="140" rx="12" fill="white"/>
       <rect x="560" y="270" width="180" height="90" rx="8" fill="white"/>
@@ -103,7 +145,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
   </section>
 
-  <!-- ── Right Form ─────────────────────────────────────────────────────── -->
   <section class="login-form-panel">
     <div class="login-box">
       <div class="login-box-header">
@@ -111,7 +152,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <p>Select your role, then enter your credentials to continue.</p>
       </div>
 
-      <!-- Error Banner -->
       <div class="login-error <?= $error ? 'show' : '' ?>" id="loginError">
         ⚠️ <?= htmlspecialchars($error) ?>
       </div>
@@ -119,7 +159,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <form method="POST" action="<?= BASE_URL ?>/index.php" class="login-form" id="loginForm">
         <input type="hidden" name="role" id="selectedRole" value="admin">
 
-        <!-- Role Selector -->
         <div class="role-selector">
           <button type="button" class="role-btn selected" data-role="admin" id="roleAdmin">
             <span class="role-icon">🛡️</span>
@@ -139,7 +178,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           </button>
         </div>
 
-        <!-- Username -->
         <div class="form-group">
           <label class="form-label" for="username">Username</label>
           <div class="input-icon-wrap">
@@ -150,13 +188,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               name="username"
               class="form-control"
               placeholder="Enter your username"
-              value="admin"
+              value=""
               required
-              autocomplete="username">
+              autocomplete="off">
           </div>
         </div>
 
-        <!-- Password -->
         <div class="form-group">
           <label class="form-label" for="password">Password</label>
           <div class="input-icon-wrap">
@@ -167,9 +204,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               name="password"
               class="form-control"
               placeholder="Enter your password"
-              value="admin123"
+              value=""
               required
-              autocomplete="current-password">
+              autocomplete="new-password">
             <button type="button" class="toggle-pw" title="Show/hide password">👁</button>
           </div>
         </div>
@@ -179,13 +216,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </button>
       </form>
 
-      <!-- Demo Hint -->
       <div class="login-hint">
-        <strong>Demo Credentials:</strong><br>
-        Admin: <kbd>admin</kbd> / <kbd>admin123</kbd> &nbsp;|&nbsp;
-        Ops: <kbd>ops</kbd> / <kbd>ops123</kbd><br>
-        Manager: <kbd>manager</kbd> / <kbd>manager123</kbd> &nbsp;|&nbsp;
-        Accountant: <kbd>accountant</kbd> / <kbd>accountant123</kbd>
+        <div class="login-hint">
+        <strong>Demo Account:</strong><br>
+        admin - Password: <kbd>admin123456</kbd> | 
+        manager - password: <kbd>mng123456</kbd><br>
+        accountant - password: <kbd>act123456</kbd> | ops - password: <kbd>ops123456</kbd>
       </div>
     </div>
   </section>
@@ -194,8 +230,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <script src="<?= BASE_URL ?>/assets/js/app.js"></script>
 <script>
-  // Pre-select admin role on load
-  document.querySelector('.role-btn[data-role="admin"]')?.click();
+  // Các thẻ DOM cần tương tác
+  const roleButtons = document.querySelectorAll('.role-btn');
+  const hiddenRoleInput = document.getElementById('selectedRole');
+  const usernameInput = document.getElementById('username');
+  const passwordInput = document.getElementById('password');
+
+  // Mảng dữ liệu Demo Account
+  const demoAccounts = {
+    'admin': { user: 'admin', pass: 'admin123456' },
+    'manager': { user: 'manager', pass: 'mng123456' },
+    'accountant': { user: 'accountant', pass: 'act123456' },
+    'operations': { user: 'ops', pass: 'ops123456' }
+  };
+
+  // 1. Xử lý sự kiện khi click vào các nút Role
+  roleButtons.forEach(button => {
+    button.addEventListener('click', function() {
+      // Xóa class 'selected' ở tất cả các nút
+      roleButtons.forEach(btn => btn.classList.remove('selected'));
+      
+      // Thêm class 'selected' cho nút vừa click
+      this.classList.add('selected');
+      
+      // Lấy role được chọn (ví dụ: 'manager')
+      const selectedRole = this.getAttribute('data-role');
+      
+      // Cập nhật giá trị data-role vào thẻ input ẩn để submit form
+      hiddenRoleInput.value = selectedRole;
+      
+      // Tự động điền Username và Password theo role đã chọn
+      if (demoAccounts[selectedRole]) {
+          setTimeout(() => {
+              usernameInput.value = demoAccounts[selectedRole].user;
+              passwordInput.value = demoAccounts[selectedRole].pass;
+          }, 30); // Delay nhẹ để đè lại autofill của trình duyệt
+      }
+    });
+  });
+
 </script>
 </body>
 </html>
