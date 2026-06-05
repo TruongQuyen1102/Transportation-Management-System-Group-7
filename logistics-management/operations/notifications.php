@@ -1,29 +1,100 @@
 <?php
 require_once __DIR__ . '/../includes/auth_check.php';
 require_once __DIR__ . '/../includes/page_shell.php';
-require_once __DIR__ . '/../config/sample_data.php';
+require_once __DIR__ . '/../config/db.php';
 auth_require('operations');
 
+$db = get_db();
+$message = '';
+$message_type = '';
+
 $user = current_user();
-$notifs = array_values(get_notifications($user['id']));
-// Fallback for demo: use ACC004 if current user has no notifs
-if (empty($notifs)) {
-    $notifs = array_values(get_notifications('ACC004'));
+$current_account_id = $user['id'] ?? 4; // Lấy đúng ID từ session
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  POST HANDLING
+// ══════════════════════════════════════════════════════════════════════════════
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+    
+    // Tự động detect cột ID (NotifID hoặc NotificationID) để tránh lỗi lệch schema
+    $pk_col = 'NotifID';
+    $check = $db->query("SHOW COLUMNS FROM system_notification LIKE 'NotificationID'");
+    if ($check && $check->num_rows > 0) {
+        $pk_col = 'NotificationID';
+    }
+
+    if ($action === 'mark_read') {
+        $notif_id = (int)($_POST['notif_id'] ?? 0);
+        if ($notif_id > 0) {
+            $stmt = $db->prepare("UPDATE system_notification SET IsRead = '1' WHERE $pk_col = ?");
+            if ($stmt) {
+                $stmt->bind_param('i', $notif_id);
+                if ($stmt->execute()) {
+                    $message = "Notification marked as read.";
+                    $message_type = "success";
+                }
+            }
+        }
+    } 
+    elseif ($action === 'mark_all_read') {
+        $stmt = $db->prepare("UPDATE system_notification SET IsRead = '1' WHERE (AccountID = ? OR AccountID IS NULL) AND IsRead = '0'");
+        if ($stmt) {
+            $stmt->bind_param('i', $current_account_id);
+            if ($stmt->execute()) {
+                $message = "All notifications marked as read.";
+                $message_type = "success";
+            }
+        }
+    }
+    elseif ($action === 'clear_all') {
+        $stmt = $db->prepare("DELETE FROM system_notification WHERE AccountID = ?");
+        if ($stmt) {
+            $stmt->bind_param('i', $current_account_id);
+            if ($stmt->execute()) {
+                $message = "All notifications cleared.";
+                $message_type = "info";
+            }
+        }
+    }
+    elseif ($action === 'clear_one') {
+        $notif_id = (int)($_POST['notif_id'] ?? 0);
+        if ($notif_id > 0) {
+            $stmt = $db->prepare("DELETE FROM system_notification WHERE $pk_col = ?");
+            if ($stmt) {
+                $stmt->bind_param('i', $notif_id);
+                if ($stmt->execute()) {
+                    $message = "Notification removed.";
+                    $message_type = "info";
+                }
+            }
+        }
+    }
 }
 
-$unread = array_filter($notifs, fn($n) => !$n['is_read']);
-$read   = array_filter($notifs, fn($n) => $n['is_read']);
+// ══════════════════════════════════════════════════════════════════════════════
+//  FETCH DATA FROM DB
+// ══════════════════════════════════════════════════════════════════════════════
 
-$notifIcons = [
-    'New Shipment Assigned'       => '📦',
-    'Delivery Exception Reported' => '⚠️',
-    'Order'                       => '📋',
-    'Delivery Delay'              => '🕐',
-    'Exception Requires Approval' => '🔔',
-    'Invoice'                     => '🧾',
-    'Payment Received'            => '💳',
-    'Shipment'                    => '🚛',
-];
+$notifs = [];
+$res_notifs = $db->query("
+    SELECT * FROM system_notification 
+    WHERE AccountID = $current_account_id 
+       OR AccountID IS NULL 
+    ORDER BY CreatedAt DESC
+");
+
+if ($res_notifs) {
+    while ($row = $res_notifs->fetch_assoc()) {
+        // Gắn key ảo '_pk' để HTML form luôn nhận đúng ID dù cột tên gì
+        $row['_pk'] = $row['NotifID'] ?? $row['NotificationID'] ?? 0;
+        $notifs[] = $row;
+    }
+}
+
+// Lọc an toàn cho cả '0'/0 và '1'/1
+$unread = array_filter($notifs, fn($n) => $n['IsRead'] == 0);
+$read   = array_filter($notifs, fn($n) => $n['IsRead'] == 1);
 
 function getIcon(string $title): string {
     foreach (['Exception'=>'⚠️','Shipment'=>'🚛','Invoice'=>'🧾','Payment'=>'💳','Order'=>'📋','Delay'=>'🕐','Approval'=>'🔔'] as $k=>$v) {
@@ -40,11 +111,23 @@ open_page('Notifications', 'notifications', [['label'=>'Operations'],['label'=>'
     <h1 class="page-title">Notifications</h1>
     <p class="page-subtitle">System-generated alerts for shipments, exceptions, and operational updates</p>
   </div>
-  <div class="page-actions">
-    <button class="btn btn-ghost btn-sm" onclick="markAllRead()">✓ Mark All Read</button>
-    <button class="btn btn-ghost btn-sm" onclick="showToast('Cleared','All notifications cleared.','info')">🗑 Clear All</button>
+  <div class="page-actions" style="display:flex; gap:8px;">
+    <form method="POST" action="" style="margin:0;">
+        <input type="hidden" name="action" value="mark_all_read">
+        <button type="submit" class="btn btn-ghost btn-sm">✓ Mark All Read</button>
+    </form>
+    <form method="POST" action="" style="margin:0;">
+        <input type="hidden" name="action" value="clear_all">
+        <button type="submit" class="btn btn-ghost btn-sm" onclick="return confirm('Are you sure you want to clear all notifications?');">🗑 Clear All</button>
+    </form>
   </div>
 </div>
+
+<?php if ($message): ?>
+<div class="alert alert-<?= $message_type ?>" style="margin-bottom:16px;">
+  <?= $message_type === 'success' ? '✅' : 'ℹ️' ?> <?= htmlspecialchars($message) ?>
+</div>
+<?php endif; ?>
 
 <!-- Stats -->
 <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px;">
@@ -87,33 +170,41 @@ open_page('Notifications', 'notifications', [['label'=>'Operations'],['label'=>'
   <!-- All -->
   <div id="tab-all" class="tab-panel active">
     <?php if (empty($notifs)): ?>
-      <div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No Notifications</div></div>
+      <div class="empty-state" style="padding:40px;"><div class="empty-icon">📭</div><div class="empty-title">No Notifications</div></div>
     <?php else: ?>
       <div class="activity-feed" style="max-height:none;">
         <?php foreach ($notifs as $n): ?>
-        <div class="activity-item notif-item <?= !$n['is_read'] ? 'notif-unread' : '' ?>"
-             id="notif-<?= $n['id'] ?>"
-             style="padding:16px 20px;<?= !$n['is_read'] ? 'background:rgba(232,184,75,.04);border-left:3px solid var(--c-yellow);' : '' ?>">
-          <div class="activity-avatar" style="<?= !$n['is_read'] ? 'background:linear-gradient(135deg,var(--c-yellow),var(--c-olive-light));color:var(--c-navy-900);' : '' ?>">
-            <?= getIcon($n['title']) ?>
+        <div class="activity-item notif-item <?= $n['IsRead'] == 0 ? 'notif-unread' : '' ?>"
+             id="notif-<?= $n['_pk'] ?>"
+             style="padding:16px 20px;<?= $n['IsRead'] == 0 ? 'background:rgba(232,184,75,.04);border-left:3px solid var(--c-yellow);' : '' ?>">
+          <div class="activity-avatar" style="<?= $n['IsRead'] == 0 ? 'background:linear-gradient(135deg,var(--c-yellow),var(--c-olive-light));color:var(--c-navy-900);' : '' ?>">
+            <?= getIcon($n['Title']) ?>
           </div>
           <div class="activity-body" style="flex:1;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
-              <div class="activity-text" style="font-weight:<?= !$n['is_read'] ? '700' : '500' ?>;color:var(--text-primary);">
-                <?= htmlspecialchars($n['title']) ?>
+              <div class="activity-text" style="font-weight:<?= $n['IsRead'] == 0 ? '700' : '500' ?>;color:var(--text-primary);">
+                <?= htmlspecialchars($n['Title']) ?>
               </div>
-              <?php if (!$n['is_read']): ?>
+              <?php if ($n['IsRead'] == 0): ?>
                 <span class="badge badge-yellow" style="font-size:10px;padding:2px 6px;">NEW</span>
               <?php endif; ?>
             </div>
-            <div class="activity-text" style="font-size:13px;"><?= htmlspecialchars($n['msg']) ?></div>
-            <div class="activity-time">🕐 <?= $n['created_at'] ?></div>
+            <div class="activity-text" style="font-size:13px;"><?= htmlspecialchars($n['Message']) ?></div>
+            <div class="activity-time">🕐 <?= date('M d, Y H:i', strtotime($n['CreatedAt'])) ?></div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0;align-items:flex-start;">
-            <?php if (!$n['is_read']): ?>
-              <button class="btn btn-ghost btn-sm" onclick="markRead('<?= $n['id'] ?>')">✓ Read</button>
+            <?php if ($n['IsRead'] == 0): ?>
+              <form method="POST" action="" style="margin:0;">
+                  <input type="hidden" name="action" value="mark_read">
+                  <input type="hidden" name="notif_id" value="<?= $n['_pk'] ?>">
+                  <button type="submit" class="btn btn-ghost btn-sm">✓ Read</button>
+              </form>
             <?php endif; ?>
-            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('notif-<?= $n['id'] ?>').style.display='none'">✕</button>
+            <form method="POST" action="" style="margin:0;">
+                <input type="hidden" name="action" value="clear_one">
+                <input type="hidden" name="notif_id" value="<?= $n['_pk'] ?>">
+                <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--c-red);">✕</button>
+            </form>
           </div>
         </div>
         <?php endforeach; ?>
@@ -130,14 +221,18 @@ open_page('Notifications', 'notifications', [['label'=>'Operations'],['label'=>'
         <?php foreach ($unread as $n): ?>
         <div class="activity-item" style="padding:16px 20px;background:rgba(232,184,75,.04);border-left:3px solid var(--c-yellow);">
           <div class="activity-avatar" style="background:linear-gradient(135deg,var(--c-yellow),var(--c-olive-light));color:var(--c-navy-900);">
-            <?= getIcon($n['title']) ?>
+            <?= getIcon($n['Title']) ?>
           </div>
           <div class="activity-body" style="flex:1;">
-            <div style="font-weight:700;color:var(--text-primary);margin-bottom:3px;"><?= htmlspecialchars($n['title']) ?></div>
-            <div class="activity-text" style="font-size:13px;"><?= htmlspecialchars($n['msg']) ?></div>
-            <div class="activity-time">🕐 <?= $n['created_at'] ?></div>
+            <div style="font-weight:700;color:var(--text-primary);margin-bottom:3px;"><?= htmlspecialchars($n['Title']) ?></div>
+            <div class="activity-text" style="font-size:13px;"><?= htmlspecialchars($n['Message']) ?></div>
+            <div class="activity-time">🕐 <?= date('M d, Y H:i', strtotime($n['CreatedAt'])) ?></div>
           </div>
-          <button class="btn btn-accent btn-sm" onclick="showToast('Marked','Notification marked as read.','success')">✓ Mark Read</button>
+          <form method="POST" action="" style="margin:0;">
+              <input type="hidden" name="action" value="mark_read">
+              <input type="hidden" name="notif_id" value="<?= $n['_pk'] ?>">
+              <button type="submit" class="btn btn-accent btn-sm">✓ Mark Read</button>
+          </form>
         </div>
         <?php endforeach; ?>
       </div>
@@ -151,14 +246,19 @@ open_page('Notifications', 'notifications', [['label'=>'Operations'],['label'=>'
     <?php else: ?>
       <div class="activity-feed" style="max-height:none;">
         <?php foreach ($read as $n): ?>
-        <div class="activity-item" style="padding:16px 20px;opacity:.75;">
-          <div class="activity-avatar"><?= getIcon($n['title']) ?></div>
+        <div class="activity-item" style="padding:16px 20px;opacity:.85;">
+          <div class="activity-avatar"><?= getIcon($n['Title']) ?></div>
           <div class="activity-body" style="flex:1;">
-            <div style="font-weight:600;color:var(--text-primary);margin-bottom:3px;"><?= htmlspecialchars($n['title']) ?></div>
-            <div class="activity-text" style="font-size:13px;"><?= htmlspecialchars($n['msg']) ?></div>
-            <div class="activity-time">🕐 <?= $n['created_at'] ?></div>
+            <div style="font-weight:600;color:var(--text-primary);margin-bottom:3px;"><?= htmlspecialchars($n['Title']) ?></div>
+            <div class="activity-text" style="font-size:13px;"><?= htmlspecialchars($n['Message']) ?></div>
+            <div class="activity-time">🕐 <?= date('M d, Y H:i', strtotime($n['CreatedAt'])) ?></div>
           </div>
-          <span class="badge badge-green">Read</span>
+          <span class="badge badge-green" style="margin-right:10px;">Read</span>
+          <form method="POST" action="" style="margin:0;">
+              <input type="hidden" name="action" value="clear_one">
+              <input type="hidden" name="notif_id" value="<?= $n['_pk'] ?>">
+              <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--c-red);">✕</button>
+          </form>
         </div>
         <?php endforeach; ?>
       </div>
@@ -167,29 +267,6 @@ open_page('Notifications', 'notifications', [['label'=>'Operations'],['label'=>'
 </div>
 
 <?php
-$extraScripts = [<<<JS
-function markRead(id) {
-  const el = document.getElementById('notif-' + id);
-  if (!el) return;
-  el.style.background = '';
-  el.style.borderLeft = '';
-  const badge = el.querySelector('.badge-yellow');
-  if (badge) badge.remove();
-  const btn = el.querySelector('button');
-  if (btn && btn.textContent.includes('Read')) btn.remove();
-  showToast('Marked as Read', 'Notification acknowledged.', 'success');
-}
-
-function markAllRead() {
-  document.querySelectorAll('.notif-unread').forEach(el => {
-    el.style.background = '';
-    el.style.borderLeft = '';
-    el.classList.remove('notif-unread');
-    const badge = el.querySelector('.badge-yellow');
-    if (badge) badge.remove();
-  });
-  showToast('All Read', 'All notifications marked as read.', 'success');
-}
-JS];
 close_page();
+$db->close();
 ?>

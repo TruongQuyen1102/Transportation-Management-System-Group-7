@@ -105,7 +105,6 @@ $navMenus = [
             ['key'=>'tracking',      'icon'=>'📍', 'label'=>'Tracking Logs',     'url'=>"$b/operations/tracking.php"],
             ['key'=>'exceptions',    'icon'=>'⚠️', 'label'=>'Exceptions',        'url'=>"$b/operations/exceptions.php",
              'badge'=> $badge_exceptions_ops ?: null],
-            ['key'=>'pod',           'icon'=>'✅', 'label'=>'Proof of Delivery', 'url'=>"$b/operations/pod.php"],
             ['key'=>'notifications', 'icon'=>'🔔', 'label'=>'Notifications',     'url'=>"$b/operations/notifications.php",
              'badge'=> $badge_notifications ?: null],
         ],

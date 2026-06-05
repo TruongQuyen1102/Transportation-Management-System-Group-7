@@ -1,27 +1,140 @@
 <?php
 require_once __DIR__ . '/../includes/auth_check.php';
 require_once __DIR__ . '/../includes/page_shell.php';
-require_once __DIR__ . '/../config/sample_data.php';
+require_once __DIR__ . '/../config/db.php'; // Replaced sample_data with real DB connection
 auth_require('operations');
 
-$shipments      = get_shipments();
-$orders         = get_orders();
-$exceptions     = get_exceptions();
-$assets         = get_transport_assets();
-$notifications  = array_values(get_notifications('ACC004'));
+$db = get_db();
+$current_user_account_id = $_SESSION['AccountID'] ?? 4; // Get current user ID (Ops)
 
-$active_shipments  = array_filter($shipments, fn($s) => $s['status'] === 'IN_TRANSIT');
-$orders_today      = array_slice($orders, 0, 3);
-$open_exceptions   = array_filter($exceptions, fn($e) => $e['status'] === 'OPEN');
-$avail_assets      = array_filter($assets, fn($a) => $a['status'] === 'Available');
-$unread_notifs     = array_filter($notifications, fn($n) => !$n['is_read']);
-
-// Status counts for donut chart
-$status_counts = ['IN_TRANSIT'=>0,'DELIVERED'=>0,'SCHEDULED'=>0,'CANCELLED'=>0];
-foreach ($shipments as $s) {
-    $key = $s['status'];
-    if (isset($status_counts[$key])) $status_counts[$key]++;
+// ── UTILITY FUNCTIONS ──────────────────────────────────────────────────────────
+function db_rows($db, $sql) {
+    $rows = [];
+    $res = $db->query($sql);
+    if ($res) {
+        while ($row = $res->fetch_assoc()) { $rows[] = $row; }
+    }
+    return $rows;
 }
+
+function ops_badge($status) {
+    $s = strtolower(trim($status));
+    $color = match($s) {
+        'delivered', 'approved', 'shipped' => 'green',
+        'in transit', 'processing' => 'olive',
+        'scheduled', 'pending' => 'yellow',
+        'cancelled', 'rejected', 'critical', 'high' => 'red',
+        default => 'gray'
+    };
+    return '<span class="badge badge-'.$color.'">'.htmlspecialchars($status).'</span>';
+}
+
+// ── FORM SUBMIT HANDLING (CRUD - SAVE TO DATABASE) ──────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'new_order') {
+        $customer_id = (int)$_POST['customer_id'];
+        $pickup = $db->real_escape_string($_POST['pickup_address']);
+        $expected_date = $db->real_escape_string($_POST['expected_delivery']);
+        $weight = (float)$_POST['weight'];
+        
+        $sql = "INSERT INTO order_info (AccountID, CustomerID, PickupAddress, OrderDate, ExpectedDeliveryDate, ShippingStatus) 
+                VALUES ($current_user_account_id, $customer_id, '$pickup', NOW(), '$expected_date', 'Pending')";
+        $db->query($sql);
+        // Note: In a full implementation, you'd also INSERT into order_detailed for the weight.
+    } 
+    elseif ($action === 'new_shipment') {
+        $order_id = (int)$_POST['order_id'];
+        $route_id = (int)$_POST['route_id'];
+        $asset_id = (int)$_POST['asset_id'];
+        $planned_dep = $db->real_escape_string($_POST['planned_dep']);
+        
+        // Create new Shipment
+        $sql = "INSERT INTO shipment (RouteID, AssetID, Status, PlannedDeparture) 
+                VALUES ($route_id, $asset_id, 'Pending', '$planned_dep')";
+        if ($db->query($sql)) {
+            $new_shipment_id = $db->insert_id;
+            // Link Shipment with Order
+            $db->query("INSERT INTO shipment_order (ShipmentID, OrderID, LegSequence) VALUES ($new_shipment_id, $order_id, 1)");
+            // Update Order status
+            $db->query("UPDATE order_info SET ShippingStatus = 'Processing' WHERE OrderID = $order_id");
+        }
+    } 
+    elseif ($action === 'report_exception') {
+        $shipment_id = (int)$_POST['shipment_id'];
+        $issue_type = $db->real_escape_string($_POST['issue_type']);
+        $desc = $db->real_escape_string($_POST['description']);
+        
+        $sql = "INSERT INTO operational_exception (ShipmentID, AccountID, IssueType, Description, SeverityLevel, ApprovalStatus, CreatedAt) 
+                VALUES ($shipment_id, $current_user_account_id, '$issue_type', '$desc', 'Medium', 'Pending', NOW())";
+        $db->query($sql);
+    }
+    
+    // Refresh page to prevent resubmission on F5
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// ── QUERY DATA FOR DISPLAY (READ) ──────────────────────────────────────
+
+// 1. Data for Stats Grid
+$active_shipments_res = $db->query("SELECT COUNT(*) FROM shipment WHERE Status = 'In Transit'");
+$active_shipments_count = $active_shipments_res ? $active_shipments_res->fetch_row()[0] : 0;
+
+$orders_today_res = $db->query("SELECT COUNT(*) FROM order_info WHERE DATE(OrderDate) = CURDATE()");
+$orders_today_count = $orders_today_res ? $orders_today_res->fetch_row()[0] : 0;
+
+$open_exceptions_res = $db->query("SELECT COUNT(*) FROM operational_exception WHERE ApprovalStatus IN ('Pending', 'Under Investigation')");
+$open_exceptions_count = $open_exceptions_res ? $open_exceptions_res->fetch_row()[0] : 0;
+
+// Available assets = Total assets - Assets currently In Transit
+$total_assets = $db->query("SELECT COUNT(*) FROM transport_asset")->fetch_row()[0];
+$used_assets = $db->query("SELECT COUNT(DISTINCT AssetID) FROM shipment WHERE Status = 'In Transit' AND AssetID IS NOT NULL")->fetch_row()[0];
+$avail_assets_count = $total_assets - $used_assets;
+
+// 2. Data for Donut Chart
+$status_counts = ['DELIVERED'=>0, 'IN_TRANSIT'=>0, 'PENDING'=>0, 'CANCELLED'=>0];
+$total_shipments = 0;
+$shipment_status_res = $db->query("SELECT Status, COUNT(*) as cnt FROM shipment GROUP BY Status");
+if ($shipment_status_res) {
+    while ($r = $shipment_status_res->fetch_assoc()) {
+        $key = strtoupper(str_replace(' ', '_', $r['Status']));
+        if (isset($status_counts[$key])) { $status_counts[$key] = $r['cnt']; }
+        $total_shipments += $r['cnt'];
+    }
+}
+
+// 3. Notification list
+$notifications = db_rows($db, "SELECT * FROM system_notification WHERE AccountID = $current_user_account_id OR AccountID IS NULL ORDER BY CreatedAt DESC LIMIT 5");
+
+// 4. Active Shipments list
+$active_shipments_list = db_rows($db, "
+    SELECT s.ShipmentID, s.Status, s.PlannedDeparture, s.EstimatedArrival, r.RouteName, ta.VehicleModel, so.OrderID 
+    FROM shipment s 
+    LEFT JOIN route r ON s.RouteID = r.RouteID 
+    LEFT JOIN transport_asset ta ON s.AssetID = ta.AssetID 
+    LEFT JOIN shipment_order so ON s.ShipmentID = so.ShipmentID 
+    WHERE s.Status = 'In Transit' 
+    ORDER BY s.PlannedDeparture DESC LIMIT 5
+");
+
+// 5. Recent Orders list
+$recent_orders = db_rows($db, "
+    SELECT oi.OrderID, bp.PartyName AS CustomerName, oi.PickupAddress, oi.ExpectedDeliveryDate, oi.ShippingStatus, COALESCE(SUM(od.Weight), 0) AS TotalWeight
+    FROM order_info oi
+    LEFT JOIN business_party bp ON oi.CustomerID = bp.PartyID
+    LEFT JOIN order_detailed od ON oi.OrderID = od.OrderID
+    GROUP BY oi.OrderID
+    ORDER BY oi.OrderDate DESC LIMIT 5
+");
+
+// 6. Data for Dropdown Modals
+$customers_list = db_rows($db, "SELECT PartyID, PartyName FROM business_party WHERE PartyType = 'Customer'");
+$routes_list = db_rows($db, "SELECT RouteID, RouteName FROM route");
+$assets_list = db_rows($db, "SELECT AssetID, VehicleModel FROM transport_asset");
+$pending_orders = db_rows($db, "SELECT OrderID, CustomerID FROM order_info WHERE ShippingStatus IN ('Pending', 'Processing')");
+$all_shipments = db_rows($db, "SELECT s.ShipmentID, r.RouteName FROM shipment s LEFT JOIN route r ON s.RouteID = r.RouteID ORDER BY s.ShipmentID DESC LIMIT 20");
 
 open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'=>'Dashboard']]);
 ?>
@@ -29,7 +142,7 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
 <div class="page-header">
   <div>
     <h1 class="page-title">Operations Dashboard</h1>
-    <p class="text-muted" style="margin-top:4px;">Welcome back, <?= htmlspecialchars(current_user()['name'] ?? 'Ops') ?> — <?= date('l, d F Y') ?></p>
+    <p class="text-muted" style="margin-top:4px;">Welcome back, <?= htmlspecialchars($_SESSION['Username'] ?? 'Ops User') ?> — <?= date('l, d F Y') ?></p>
   </div>
   <div class="page-actions">
     <button class="btn btn-outline btn-sm" data-modal-open="modalNewOrder">📋 New Order</button>
@@ -38,38 +151,43 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
   </div>
 </div>
 
-<!-- Stats -->
-<div class="stats-grid">
+<div class="stats-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:20px;">
   <div class="stat-card navy">
     <div class="stat-icon">📦</div>
-    <div class="stat-value"><?= count($active_shipments) ?></div>
-    <div class="stat-label">Active Shipments</div>
-    <div class="stat-trend">In Transit right now</div>
+    <div class="stat-body">
+      <div class="stat-value"><?= $active_shipments_count ?></div>
+      <div class="stat-label">Active Shipments</div>
+      <div class="stat-trend neutral">In Transit right now</div>
+    </div>
   </div>
   <div class="stat-card slate">
     <div class="stat-icon">📋</div>
-    <div class="stat-value"><?= count($orders_today) ?></div>
-    <div class="stat-label">Orders Today</div>
-    <div class="stat-trend">Latest 3 orders</div>
+    <div class="stat-body">
+      <div class="stat-value"><?= $orders_today_count ?></div>
+      <div class="stat-label">Orders Today</div>
+      <div class="stat-trend neutral">Added today</div>
+    </div>
   </div>
   <div class="stat-card red">
     <div class="stat-icon">⚠️</div>
-    <div class="stat-value"><?= count($open_exceptions) ?></div>
-    <div class="stat-label">Open Exceptions</div>
-    <div class="stat-trend">Requiring action</div>
+    <div class="stat-body">
+      <div class="stat-value"><?= $open_exceptions_count ?></div>
+      <div class="stat-label">Open Exceptions</div>
+      <div class="stat-trend neutral">Requiring action</div>
+    </div>
   </div>
   <div class="stat-card green">
     <div class="stat-icon">🚛</div>
-    <div class="stat-value"><?= count($avail_assets) ?></div>
-    <div class="stat-label">Assets Available</div>
-    <div class="stat-trend">Ready to assign</div>
+    <div class="stat-body">
+      <div class="stat-value"><?= $avail_assets_count ?></div>
+      <div class="stat-label">Assets Available</div>
+      <div class="stat-trend neutral">Ready to assign</div>
+    </div>
   </div>
 </div>
 
-<!-- Main Grid -->
 <div class="grid-2" style="margin-top:24px;gap:20px;">
 
-  <!-- Shipment Status Donut -->
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">Shipment Status Overview</h3>
@@ -89,8 +207,8 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
             <span class="font-bold"><?= $status_counts['IN_TRANSIT'] ?></span>
           </div>
           <div class="flex flex-between">
-            <span style="display:flex;align-items:center;gap:8px;"><span style="width:12px;height:12px;border-radius:50%;background:#3A5361;display:inline-block;"></span> Scheduled</span>
-            <span class="font-bold"><?= $status_counts['SCHEDULED'] ?></span>
+            <span style="display:flex;align-items:center;gap:8px;"><span style="width:12px;height:12px;border-radius:50%;background:#3A5361;display:inline-block;"></span> Pending/Sched</span>
+            <span class="font-bold"><?= $status_counts['PENDING'] ?></span>
           </div>
           <div class="flex flex-between">
             <span style="display:flex;align-items:center;gap:8px;"><span style="width:12px;height:12px;border-radius:50%;background:#aaa;display:inline-block;"></span> Cancelled</span>
@@ -98,34 +216,37 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
           </div>
           <div style="border-top:1px solid var(--border);padding-top:10px;" class="flex flex-between">
             <span class="font-bold">Total Shipments</span>
-            <span class="font-bold"><?= count($shipments) ?></span>
+            <span class="font-bold"><?= $total_shipments ?></span>
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Unread Notifications -->
-  <div class="card">
+ <div class="card">
     <div class="card-header">
       <h3 class="card-title">🔔 Notifications</h3>
-      <a href="/operations/notifications.php" class="btn btn-ghost btn-sm">View All</a>
+      <a href="../operations/notifications.php" class="btn btn-ghost btn-sm">View All</a>
     </div>
-    <div class="card-body" style="padding:0;">
+    <div class="card-body p-0">
       <?php if (empty($notifications)): ?>
-        <p class="text-muted" style="padding:20px;">No notifications.</p>
+        <p class="text-muted text-center py-24 font-sm" style="padding: 24px;">No notifications.</p>
       <?php else: ?>
         <div class="activity-feed">
-          <?php foreach (array_slice($notifications, 0, 4) as $n): ?>
-            <div class="activity-item" style="<?= !$n['is_read'] ? 'background:rgba(232,184,75,0.06);border-left:3px solid var(--c-yellow);' : '' ?>">
-              <div class="activity-icon"><?= $n['is_read'] ? '📭' : '🔔' ?></div>
-              <div class="activity-body">
-                <div class="flex flex-between">
-                  <strong><?= htmlspecialchars($n['title']) ?></strong>
-                  <?php if (!$n['is_read']): ?><span class="badge badge-yellow">Unread</span><?php endif; ?>
+          <?php foreach ($notifications as $n): ?>
+            <div class="activity-item" style="padding: 12px 16px; <?= $n['IsRead'] == '0' ? 'border-left: 3px solid var(--c-yellow); padding-left: 13px; background: rgba(232, 184, 75, 0.03);' : '' ?>">
+              <div class="activity-icon" style="font-size: 15px; margin-top: 1px;">🔔</div>
+              <div class="activity-body" style="flex: 1; margin-left: 10px;">
+                <div class="flex flex-between" style="align-items: center;">
+                  <strong style="font-size: 13px; color: var(--c-navy-900);"><?= htmlspecialchars($n['Title']) ?></strong>
+                  <?php if ($n['IsRead'] == '0'): ?>
+                    <span class="badge badge-yellow" style="font-size: 10px; padding: 2px 8px; border-radius: 12px; letter-spacing: 0;">● Unread</span>
+                  <?php endif; ?>
                 </div>
-                <div class="text-muted" style="font-size:12px;margin-top:2px;"><?= htmlspecialchars($n['msg']) ?></div>
-                <div class="text-muted" style="font-size:11px;margin-top:4px;">🕐 <?= $n['created_at'] ?></div>
+                <div class="text-muted" style="font-size:12px; margin-top:3px; line-height: 1.4;"><?= htmlspecialchars($n['Message']) ?></div>
+                <div class="text-muted" style="font-size:11px; margin-top:5px; display: flex; align-items: center; gap: 4px;">
+                  🕒 <?= date('M d, H:i', strtotime($n['CreatedAt'])) ?>
+                </div>
               </div>
             </div>
           <?php endforeach; ?>
@@ -136,32 +257,31 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
 
 </div>
 
-<!-- Active Shipments Timeline -->
 <div class="card mt-16">
   <div class="card-header">
     <h3 class="card-title">🚛 Active Shipments (In Transit)</h3>
-    <a href="/operations/shipments.php" class="btn btn-outline btn-sm">View All Shipments</a>
+    <a href="../operations/shipments.php" class="btn btn-outline btn-sm">View All Shipments</a>
   </div>
-  <div class="card-body" style="padding:0;">
-    <?php if (empty($active_shipments)): ?>
+  <div class="card-body">
+    <?php if (empty($active_shipments_list)): ?>
       <div class="alert alert-info" style="margin:16px;">No shipments currently in transit.</div>
     <?php else: ?>
       <div class="timeline" style="padding:16px 24px;">
-        <?php foreach ($active_shipments as $shp): ?>
+        <?php foreach ($active_shipments_list as $shp): ?>
           <div class="timeline-item">
             <div class="flex flex-between" style="margin-bottom:4px;">
               <div style="display:flex;align-items:center;gap:10px;">
-                <strong><?= htmlspecialchars($shp['id']) ?></strong>
-                <?= status_badge($shp['status']) ?>
-                <span class="text-muted">→ <?= htmlspecialchars($shp['order_id']) ?></span>
+                <strong>SHP<?= str_pad($shp['ShipmentID'], 4, '0', STR_PAD_LEFT) ?></strong>
+                <?= ops_badge($shp['Status']) ?>
+                <span class="text-muted">→ ORD<?= str_pad($shp['OrderID'] ?? 0, 4, '0', STR_PAD_LEFT) ?></span>
               </div>
-              <a href="/operations/shipment_detail.php?id=<?= $shp['id'] ?>" class="btn btn-ghost btn-sm">Track →</a>
+              <a href="../operations/shipment_detail.php?id=<?= $shp['ShipmentID'] ?>" class="btn btn-ghost btn-sm">Track →</a>
             </div>
             <div style="font-size:13px;color:var(--text-muted);">
-              🗺️ <?= htmlspecialchars($shp['route']) ?> &nbsp;|&nbsp;
-              🚛 <?= htmlspecialchars($shp['asset']) ?> &nbsp;|&nbsp;
-              📅 Departed: <?= $shp['actual_dep'] ?? $shp['planned_dep'] ?> &nbsp;|&nbsp;
-              🏁 ETA: <?= $shp['est_arr'] ?>
+              🗺️ <?= htmlspecialchars($shp['RouteName'] ?? 'N/A') ?> &nbsp;|&nbsp;
+              🚛 <?= htmlspecialchars($shp['VehicleModel'] ?? 'N/A') ?> &nbsp;|&nbsp;
+              📅 Departed: <?= date('Y-m-d H:i', strtotime($shp['PlannedDeparture'])) ?> &nbsp;|&nbsp;
+              🏁 ETA: <?= date('Y-m-d', strtotime($shp['EstimatedArrival'])) ?>
             </div>
           </div>
         <?php endforeach; ?>
@@ -170,11 +290,10 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
   </div>
 </div>
 
-<!-- Recent Orders Table -->
 <div class="card mt-16">
   <div class="card-header">
     <h3 class="card-title">📋 Recent Orders</h3>
-    <a href="/operations/shipments.php" class="btn btn-outline btn-sm">View All</a>
+    <a href="../operations/shipments.php" class="btn btn-outline btn-sm">View All</a>
   </div>
   <div class="table-wrapper">
     <table>
@@ -182,30 +301,28 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
         <tr>
           <th>Order ID</th>
           <th>Customer</th>
-          <th>Pickup</th>
-          <th>Delivery</th>
-          <th>Expected</th>
+          <th>Pickup Location</th>
+          <th>Expected Date</th>
           <th>Weight</th>
           <th>Status</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        <?php foreach (array_slice($orders, 0, 5) as $ord): ?>
+        <?php foreach ($recent_orders as $ord): ?>
           <tr>
-            <td><strong><?= $ord['id'] ?></strong></td>
-            <td><?= htmlspecialchars($ord['customer']) ?></td>
-            <td class="td-muted truncate" style="max-width:140px;"><?= htmlspecialchars($ord['pickup']) ?></td>
-            <td class="td-muted truncate" style="max-width:140px;"><?= htmlspecialchars($ord['delivery']) ?></td>
-            <td class="td-muted"><?= $ord['expected_delivery'] ?></td>
-            <td><?= fmt_num($ord['weight']) ?> kg</td>
-            <td><?= status_badge($ord['status']) ?></td>
+            <td><strong>ORD<?= str_pad($ord['OrderID'], 4, '0', STR_PAD_LEFT) ?></strong></td>
+            <td><?= htmlspecialchars($ord['CustomerName'] ?? 'Unknown') ?></td>
+            <td class="td-muted truncate" style="max-width:200px;" title="<?= htmlspecialchars($ord['PickupAddress']) ?>"><?= htmlspecialchars($ord['PickupAddress']) ?></td>
+            <td class="td-muted"><?= date('Y-m-d', strtotime($ord['ExpectedDeliveryDate'])) ?></td>
+            <td><?= number_format($ord['TotalWeight'], 2) ?> kg</td>
+            <td><?= ops_badge($ord['ShippingStatus']) ?></td>
             <td>
               <div class="action-menu">
-                <button class="action-menu-btn btn btn-ghost btn-sm" data-dropdown-toggle="actOrd<?= $ord['id'] ?>">⋯</button>
-                <div class="action-dropdown" id="actOrd<?= $ord['id'] ?>">
+                <button class="action-menu-btn btn btn-ghost btn-sm" data-dropdown-toggle="actOrd<?= $ord['OrderID'] ?>">⋯</button>
+                <div class="action-dropdown" id="actOrd<?= $ord['OrderID'] ?>">
                   <a href="#" class="dropdown-item">👁 View</a>
-                  <a href="/operations/shipments.php" class="dropdown-item">📦 Create Shipment</a>
+                  <a href="#" class="dropdown-item" data-modal-open="modalNewShipment">📦 Create Shipment</a>
                 </div>
               </div>
             </td>
@@ -216,7 +333,6 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
   </div>
 </div>
 
-<!-- Modal: New Shipment -->
 <div class="modal-overlay" id="modalNewShipment">
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
@@ -224,23 +340,24 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
       <button class="modal-close">×</button>
     </div>
     <div class="modal-body">
-      <form data-feedback="Shipment created successfully!">
+      <form id="formCreateShipment" method="POST" action="">
+        <input type="hidden" name="action" value="new_shipment">
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Order ID</label>
-            <select class="form-control">
-              <?php foreach ($orders as $o): ?>
-                <?php if (in_array($o['status'],['PENDING','CONFIRMED'])): ?>
-                  <option><?= $o['id'] ?> — <?= htmlspecialchars($o['customer']) ?></option>
-                <?php endif; ?>
+            <label class="form-label">Order ID (Pending/Processing)</label>
+            <select name="order_id" class="form-control" required>
+              <option value="">-- Select Order --</option>
+              <?php foreach ($pending_orders as $o): ?>
+                <option value="<?= $o['OrderID'] ?>">ORD<?= str_pad($o['OrderID'], 4, '0', STR_PAD_LEFT) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
           <div class="form-group">
             <label class="form-label">Route</label>
-            <select class="form-control">
-              <?php foreach (get_routes() as $r): ?>
-                <option><?= htmlspecialchars($r['name']) ?></option>
+            <select name="route_id" class="form-control" required>
+              <option value="">-- Select Route --</option>
+              <?php foreach ($routes_list as $r): ?>
+                <option value="<?= $r['RouteID'] ?>"><?= htmlspecialchars($r['RouteName']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -248,31 +365,27 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Transport Asset</label>
-            <select class="form-control">
-              <?php foreach ($avail_assets as $a): ?>
-                <option><?= $a['id'] ?> — <?= htmlspecialchars($a['type']) ?></option>
+            <select name="asset_id" class="form-control" required>
+              <option value="">-- Select Asset --</option>
+              <?php foreach ($assets_list as $a): ?>
+                <option value="<?= $a['AssetID'] ?>"><?= htmlspecialchars($a['VehicleModel']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
           <div class="form-group">
             <label class="form-label">Planned Departure</label>
-            <input type="datetime-local" class="form-control">
+            <input type="datetime-local" name="planned_dep" class="form-control" required>
           </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Notes</label>
-          <textarea class="form-control" rows="2" placeholder="Any special instructions..."></textarea>
         </div>
       </form>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline modal-close">Cancel</button>
-      <button class="btn btn-primary">Create Shipment</button>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid var(--border-color,#e5e7eb);">
+      <button type="button" class="btn btn-outline modal-close">Cancel</button>
+      <button type="submit" form="formCreateShipment" class="btn btn-primary">Create Shipment</button>
     </div>
   </div>
 </div>
 
-<!-- Modal: New Order -->
 <div class="modal-overlay" id="modalNewOrder">
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
@@ -280,45 +393,40 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
       <button class="modal-close">×</button>
     </div>
     <div class="modal-body">
-      <form data-feedback="Order created successfully!">
+      <form id="formNewOrder" method="POST" action="">
+        <input type="hidden" name="action" value="new_order">
         <div class="form-group">
           <label class="form-label">Customer</label>
-          <select class="form-control">
-            <?php foreach (get_customers() as $c): ?>
-              <option><?= htmlspecialchars($c['name']) ?></option>
+          <select name="customer_id" class="form-control" required>
+            <option value="">-- Select Customer --</option>
+            <?php foreach ($customers_list as $c): ?>
+              <option value="<?= $c['PartyID'] ?>"><?= htmlspecialchars($c['PartyName']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Pickup Address</label>
-            <input type="text" class="form-control" placeholder="Pickup location">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Delivery Address</label>
-            <input type="text" class="form-control" placeholder="Delivery destination">
-          </div>
+        <div class="form-group">
+          <label class="form-label">Pickup Address</label>
+          <input type="text" name="pickup_address" class="form-control" placeholder="Pickup location" required>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Weight (kg)</label>
-            <input type="number" class="form-control" placeholder="0">
+            <label class="form-label">Approx. Total Weight (kg)</label>
+            <input type="number" step="0.01" name="weight" class="form-control" placeholder="0.00" required>
           </div>
           <div class="form-group">
-            <label class="form-label">Expected Delivery</label>
-            <input type="date" class="form-control">
+            <label class="form-label">Expected Delivery Date</label>
+            <input type="date" name="expected_delivery" class="form-control" required>
           </div>
         </div>
       </form>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline modal-close">Cancel</button>
-      <button class="btn btn-primary">Create Order</button>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid var(--border-color,#e5e7eb);">
+      <button type="button" class="btn btn-outline modal-close">Cancel</button>
+      <button type="submit" form="formNewOrder" class="btn btn-primary">Create Order</button>
     </div>
   </div>
 </div>
 
-<!-- Modal: Report Exception -->
 <div class="modal-overlay" id="modalReportException">
   <div class="modal" style="max-width:500px;">
     <div class="modal-header">
@@ -326,60 +434,68 @@ open_page('Operations Dashboard', 'dashboard', [['label'=>'Operations'],['label'
       <button class="modal-close">×</button>
     </div>
     <div class="modal-body">
-      <form data-feedback="Exception reported!">
+      <form id="formReportException" method="POST" action="">
+        <input type="hidden" name="action" value="report_exception">
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Shipment</label>
-            <select class="form-control">
-              <?php foreach ($shipments as $s): ?>
-                <option><?= $s['id'] ?> — <?= $s['route'] ?></option>
+            <select name="shipment_id" class="form-control" required>
+              <option value="">-- Select Shipment --</option>
+              <?php foreach ($all_shipments as $s): ?>
+                <option value="<?= $s['ShipmentID'] ?>">SHP<?= str_pad($s['ShipmentID'], 4, '0', STR_PAD_LEFT) ?> - <?= htmlspecialchars($s['RouteName']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
           <div class="form-group">
             <label class="form-label">Issue Type</label>
-            <select class="form-control">
-              <option>Traffic Delay</option>
-              <option>Damaged Goods</option>
-              <option>Route Deviation</option>
-              <option>Vehicle Breakdown</option>
-              <option>Failed Delivery</option>
-              <option>Weather Event</option>
+            <select name="issue_type" class="form-control" required>
+              <option value="Traffic Delay">Traffic Delay</option>
+              <option value="Damaged Goods">Damaged Goods</option>
+              <option value="Route Deviation">Route Deviation</option>
+              <option value="Vehicle Breakdown">Vehicle Breakdown</option>
+              <option value="Failed Delivery">Failed Delivery</option>
+              <option value="Weather Event">Weather Event</option>
+              <option value="Customs Hold">Customs Hold</option>
             </select>
           </div>
         </div>
         <div class="form-group">
           <label class="form-label">Description</label>
-          <textarea class="form-control" rows="3" placeholder="Describe the issue in detail..."></textarea>
+          <textarea name="description" class="form-control" rows="3" placeholder="Describe the issue in detail..." required></textarea>
         </div>
       </form>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline modal-close">Cancel</button>
-      <button class="btn btn-danger">Report Exception</button>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid var(--border-color,#e5e7eb);">
+      <button type="button" class="btn btn-outline modal-close">Cancel</button>
+      <button type="submit" form="formReportException" class="btn btn-danger">Report Exception</button>
     </div>
   </div>
 </div>
 
 <script>
-new Chart(document.getElementById('shipmentDonut'), {
-  type: 'doughnut',
-  data: {
-    labels: ['Delivered', 'In Transit', 'Scheduled', 'Cancelled'],
-    datasets: [{
-      data: [<?= $status_counts['DELIVERED'] ?>, <?= $status_counts['IN_TRANSIT'] ?>, <?= $status_counts['SCHEDULED'] ?>, <?= $status_counts['CANCELLED'] ?>],
-      backgroundColor: ['#6B8C3E','#E8B84B','#3A5361','#aaa'],
-      borderWidth: 0,
-      hoverOffset: 6
-    }]
-  },
-  options: {
-    responsive: true,
-    maintainAspectRatio: true,
-    cutout: '65%',
-    plugins: { legend: { display: false } }
-  }
+window.addEventListener('load', function() {
+    new Chart(document.getElementById('shipmentDonut'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Delivered', 'In Transit', 'Pending', 'Cancelled'],
+        datasets: [{
+          data: [<?= $status_counts['DELIVERED'] ?>, <?= $status_counts['IN_TRANSIT'] ?>, <?= $status_counts['PENDING'] ?>, <?= $status_counts['CANCELLED'] ?>],
+          backgroundColor: ['#6B8C3E','#E8B84B','#3A5361','#aaa'],
+          borderWidth: 0,
+          hoverOffset: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        cutout: '65%',
+        plugins: { legend: { display: false } }
+      }
+    });
 });
 </script>
 
-<?php close_page(); ?>
+<?php 
+close_page(); 
+$db->close();
+?>
