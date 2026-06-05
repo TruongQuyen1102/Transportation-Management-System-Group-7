@@ -215,7 +215,7 @@ open_page('Shipment Orders', 'shipments', [['label'=>'Operations'],['label'=>'Sh
     min-width: 150px;
   }
   .datetime-column {
-    min-width: 100px;
+    min-width: 180px;
   }
 </style>
 
@@ -251,8 +251,7 @@ open_page('Shipment Orders', 'shipments', [['label'=>'Operations'],['label'=>'Sh
             
             <td class="td-muted datetime-column">
                 <?php if($s['PlannedDeparture']): ?>
-                    <?= date('Y-m-d', strtotime($s['PlannedDeparture'])) ?><br>
-                    <small style="color:var(--c-slate-500)"><?= date('H:i', strtotime($s['PlannedDeparture'])) ?></small>
+                    <?= date('Y-m-d H:i', strtotime($s['PlannedDeparture'])) ?>
                 <?php else: ?>
                     —
                 <?php endif; ?>
@@ -260,8 +259,7 @@ open_page('Shipment Orders', 'shipments', [['label'=>'Operations'],['label'=>'Sh
             
             <td class="td-muted datetime-column">
                 <?php if($s['EstimatedArrival']): ?>
-                    <?= date('Y-m-d', strtotime($s['EstimatedArrival'])) ?><br>
-                    <small style="color:var(--c-slate-500)"><?= date('H:i', strtotime($s['EstimatedArrival'])) ?></small>
+                    <?= date('Y-m-d H:i', strtotime($s['EstimatedArrival'])) ?>
                 <?php else: ?>
                     —
                 <?php endif; ?>
@@ -286,10 +284,10 @@ open_page('Shipment Orders', 'shipments', [['label'=>'Operations'],['label'=>'Sh
 </div>
 
 <div class="modal-overlay" id="modalCreateShipment">
-  <div class="modal" style="max-width:580px;">
+  <div class="modal" style="max-width:700px;">
     <div class="modal-header">
       <h3 class="modal-title">📦 Create New Shipment</h3>
-      <button class="modal-close">×</button>
+      <button class="modal-close" type="button">×</button>
     </div>
     <form method="POST" action="">
       <input type="hidden" name="action" value="create_shipment">
@@ -350,7 +348,7 @@ open_page('Shipment Orders', 'shipments', [['label'=>'Operations'],['label'=>'Sh
   <div class="modal" style="max-width:400px;">
     <div class="modal-header">
       <h3 class="modal-title">🔄 Update Shipment Status</h3>
-      <button class="modal-close">×</button>
+      <button class="modal-close" type="button">×</button>
     </div>
     <form method="POST" action="">
       <input type="hidden" name="action" value="update_status">
@@ -379,7 +377,7 @@ open_page('Shipment Orders', 'shipments', [['label'=>'Operations'],['label'=>'Sh
   <div class="modal" style="max-width:460px;">
     <div class="modal-header">
       <h3 class="modal-title">⚠️ Log Exception</h3>
-      <button class="modal-close">×</button>
+      <button class="modal-close" type="button">×</button>
     </div>
     <form method="POST" action="">
       <input type="hidden" name="action" value="log_exception">
@@ -421,12 +419,14 @@ function openUpdateStatus(id, currentStatus) {
             break;
         }
     }
-    document.getElementById('modalUpdateStatus').classList.add('active');
+    // Update: Sử dụng class 'open' thay vì 'active' để đồng bộ với app.js
+    document.getElementById('modalUpdateStatus').classList.add('open');
 }
 
 function openLogException(id) {
     document.getElementById('exc_shipment_id').value = id;
-    document.getElementById('modalLogException').classList.add('active');
+    // Update: Sử dụng class 'open' thay vì 'active' để đồng bộ với app.js
+    document.getElementById('modalLogException').classList.add('open');
 }
 </script>
 

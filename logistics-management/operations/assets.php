@@ -38,7 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mode       = $_POST['transport_mode'] ?? 'Road';
         $category   = trim($_POST['asset_category'] ?? '');
         $model      = trim($_POST['vehicle_model'] ?? '');
-        $plate      = trim($_POST['plate'] ?? '');
         $max_weight = (float)($_POST['max_weight'] ?? 0);
         $max_volume = (float)($_POST['max_volume'] ?? 0);
         $status     = $_POST['status'] ?? 'Available';
@@ -66,7 +65,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $asset_id   = (int)($_POST['asset_id'] ?? 0);
         $category   = trim($_POST['asset_category'] ?? '');
         $model      = trim($_POST['vehicle_model'] ?? '');
-        $plate      = trim($_POST['plate'] ?? '');
         $max_weight = (float)($_POST['max_weight'] ?? 0);
         $max_volume = (float)($_POST['max_volume'] ?? 0);
         $mode       = $_POST['transport_mode'] ?? 'Road';
@@ -96,14 +94,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ── 4. DEACTIVATE ASSET ──────────────────────────────────────────────────
-    elseif ($action === 'deactivate_asset') {
-        $asset_id = (int)($_POST['asset_id'] ?? 0);
-        if ($asset_id) {
-            $stmt = $db->prepare("UPDATE transport_asset SET Status='Inactive' WHERE AssetID=?");
-            $stmt->bind_param('i', $asset_id);
+    // ── 4. UPDATE CARRIER STATUS ─────────────────────────────────────────────
+    elseif ($action === 'update_carrier_status') {
+        $party_id   = (int)($_POST['party_id'] ?? 0);
+        $new_status = $_POST['new_status'] ?? '';
+
+        if ($party_id && $new_status) {
+            $stmt = $db->prepare("UPDATE carrier SET Status=? WHERE PartyID=?");
+            $stmt->bind_param('si', $new_status, $party_id);
             $stmt->execute();
-            $message = "Asset #$asset_id deactivated.";
+            $message = "Carrier #$party_id status updated to $new_status.";
+            $message_type = 'success';
+        }
+    }
+    
+    // ── 5. EDIT CARRIER ──────────────────────────────────────────────────────
+    elseif ($action === 'edit_carrier') {
+        $party_id = (int)($_POST['party_id'] ?? 0);
+        $name     = trim($_POST['party_name'] ?? '');
+        $email    = trim($_POST['contact_email'] ?? '');
+        $phone    = trim($_POST['phone'] ?? '');
+
+        if ($party_id) {
+            $stmt = $db->prepare("UPDATE business_party SET PartyName=?, ContactEmail=?, Phone=? WHERE PartyID=?");
+            $stmt->bind_param('sssi', $name, $email, $phone, $party_id);
+            $stmt->execute();
+            $message = "Carrier #$party_id updated.";
             $message_type = 'success';
         }
     }
@@ -272,9 +288,6 @@ open_page('Transport Assets', 'assets', [['label'=>'Operations'],['label'=>'Tran
                   <a href="#" class="dropdown-item"
                      onclick="openChangeStatus(<?= $a['AssetID'] ?>, '<?= $a['Status'] ?>')">
                      🔄 Change Status</a>
-                  <a href="#" class="dropdown-item danger"
-                     onclick="deactivateAsset(<?= $a['AssetID'] ?>)">
-                     🚫 Deactivate</a>
                 </div>
               </div>
             </td>
@@ -300,12 +313,13 @@ open_page('Transport Assets', 'assets', [['label'=>'Operations'],['label'=>'Tran
           <th>Performance Score</th>
           <th>Contact</th>
           <th>Status</th>
+          <th style="text-align:right;">Actions</th>
         </tr>
       </thead>
       <tbody>
         <?php foreach ($carriers as $c):
           $score = (float)$c['PFM_Score'];
-          $score_pct = round($score * 20); // 0-5 scale → 0-100%
+          $score_pct = round($score * 20); 
           $color = $score >= 4.5 ? 'green' : ($score >= 3.5 ? 'yellow' : 'red');
         ?>
           <tr>
@@ -333,6 +347,20 @@ open_page('Transport Assets', 'assets', [['label'=>'Operations'],['label'=>'Tran
               📞 <?= htmlspecialchars($c['Phone']) ?>
             </td>
             <td><?= status_badge($c['Status']) ?></td>
+            <td style="text-align:right;">
+              <div class="action-menu">
+                <button class="action-menu-btn btn btn-ghost btn-sm"
+                        data-dropdown-toggle="actCar<?= $c['PartyID'] ?>">⋯</button>
+                <div class="action-dropdown" id="actCar<?= $c['PartyID'] ?>">
+                  <a href="#" class="dropdown-item"
+                     onclick="openEditCarrier(<?= $c['PartyID'] ?>, '<?= htmlspecialchars(addslashes($c['PartyName'])) ?>', '<?= htmlspecialchars(addslashes($c['ContactEmail'])) ?>', '<?= htmlspecialchars(addslashes($c['Phone'])) ?>')">
+                     ✏️ Edit</a>
+                  <a href="#" class="dropdown-item"
+                     onclick="openChangeCarrierStatus(<?= $c['PartyID'] ?>, '<?= $c['Status'] ?>')">
+                     🔄 Change Status</a>
+                </div>
+              </div>
+            </td>
           </tr>
         <?php endforeach; ?>
       </tbody>
@@ -340,12 +368,10 @@ open_page('Transport Assets', 'assets', [['label'=>'Operations'],['label'=>'Tran
   </div>
 </div>
 
-<form id="formDeactivate" method="POST" action="" style="display:none;">
-  <input type="hidden" name="action" value="deactivate_asset">
-  <input type="hidden" name="asset_id" id="deact_asset_id">
-</form>
+<!-- Modals ... -->
 
 <div class="modal-overlay" id="modalAddAsset">
+  <!-- ... (Add Asset Modal) -->
   <div class="modal" style="max-width:540px;">
     <div class="modal-header">
       <h3 class="modal-title">🚛 Add Transport Asset</h3>
@@ -487,6 +513,66 @@ open_page('Transport Assets', 'assets', [['label'=>'Operations'],['label'=>'Tran
   </div>
 </div>
 
+<div class="modal-overlay" id="modalEditCarrier">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <h3 class="modal-title">✏️ Edit Carrier</h3>
+      <button class="modal-close">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="formEditCarrier" method="POST" action="">
+        <input type="hidden" name="action" value="edit_carrier">
+        <input type="hidden" name="party_id" id="edit_party_id">
+        <div class="form-group">
+          <label class="form-label">Carrier Name</label>
+          <input type="text" class="form-control" name="party_name" id="edit_party_name">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" name="contact_email" id="edit_contact_email">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Phone</label>
+            <input type="text" class="form-control" name="phone" id="edit_phone">
+          </div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-modal-close>Cancel</button>
+      <button type="submit" form="formEditCarrier" class="btn btn-primary">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalChangeCarrierStatus">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-header">
+      <h3 class="modal-title">🔄 Update Carrier Status</h3>
+      <button class="modal-close">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="formChangeCarrierStatus" method="POST" action="">
+        <input type="hidden" name="action" value="update_carrier_status">
+        <input type="hidden" name="party_id" id="ccs_party_id">
+        <div class="form-group">
+          <label class="form-label">New Status</label>
+          <select class="form-control" name="new_status" id="ccs_status">
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="Limited">Limited</option>
+          </select>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-modal-close>Cancel</button>
+      <button type="submit" form="formChangeCarrierStatus" class="btn btn-primary">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function openEditAsset(id, category, model, weight, volume, mode) {
     document.getElementById('edit_asset_id').value = id;
@@ -506,10 +592,19 @@ function openChangeStatus(id, currentStatus) {
     document.getElementById('modalChangeStatus').classList.add('open');
 }
 
-function deactivateAsset(id) {
-    if (!confirm('Deactivate this asset?')) return;
-    document.getElementById('deact_asset_id').value = id;
-    document.getElementById('formDeactivate').submit();
+function openEditCarrier(id, name, email, phone) {
+    document.getElementById('edit_party_id').value = id;
+    document.getElementById('edit_party_name').value = name;
+    document.getElementById('edit_contact_email').value = email;
+    document.getElementById('edit_phone').value = phone;
+    document.getElementById('modalEditCarrier').classList.add('open');
+}
+
+function openChangeCarrierStatus(id, currentStatus) {
+    document.getElementById('ccs_party_id').value = id;
+    const sel = document.getElementById('ccs_status');
+    for (let o of sel.options) { if (o.value === currentStatus) { o.selected = true; break; } }
+    document.getElementById('modalChangeCarrierStatus').classList.add('open');
 }
 
 // Client-side table filtering
