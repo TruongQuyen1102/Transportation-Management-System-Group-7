@@ -276,7 +276,7 @@ if ($isExport) {
                 $row['StatusVal']
             ]);
     } else {
-        fputcsv($output, ['Invoice ID', 'Billed Party ID', 'Amount (VND)', 'Status']);
+        fputcsv($output, ['Invoice ID', 'Billed Party ID', 'Amount (USD)', 'Status']);
         foreach ($tableData as $row)
             fputcsv($output, [
                 'INV' . str_pad($row['EntityID'], 4, '0', STR_PAD_LEFT),
@@ -381,15 +381,15 @@ open_page('Report Generator', 'reports', [['label' => 'Manager'], ['label' => 'R
     </div></div>
   <?php else: ?>
     <div class="stat-card navy"><div class="stat-body">
-      <div class="stat-value"><?= number_format($stat1) ?> <span style="font-size:14px">VND</span></div>
+      <div class="stat-value"><?= number_format($stat1) ?> <span style="font-size:14px">USD</span></div>
       <div class="stat-label">Total Invoiced Volume</div>
     </div></div>
     <div class="stat-card green"><div class="stat-body">
-      <div class="stat-value"><?= number_format($stat2) ?> <span style="font-size:14px">VND</span></div>
+      <div class="stat-value"><?= number_format($stat2) ?> <span style="font-size:14px">USD</span></div>
       <div class="stat-label">Collected Revenue (Paid)</div>
     </div></div>
     <div class="stat-card red"><div class="stat-body">
-      <div class="stat-value"><?= number_format($stat3) ?> <span style="font-size:14px">VND</span></div>
+      <div class="stat-value"><?= number_format($stat3) ?> <span style="font-size:14px">USD</span></div>
       <div class="stat-label">Outstanding Balance</div>
     </div></div>
   <?php endif; ?>
@@ -428,7 +428,7 @@ open_page('Report Generator', 'reports', [['label' => 'Manager'], ['label' => 'R
             <?php if ($reportType === 'operational'): ?>
               <th>Shipment ID</th><th>Planned Departure</th><th>Status</th>
             <?php else: ?>
-              <th>Invoice ID</th><th>Billed Party ID</th><th>Amount (VND)</th><th>Status</th>
+              <th>Invoice ID</th><th>Billed Party ID</th><th>Amount (USD)</th><th>Status</th>
             <?php endif; ?>
           </tr>
         </thead>

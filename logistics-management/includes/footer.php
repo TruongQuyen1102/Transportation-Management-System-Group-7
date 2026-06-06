@@ -1,7 +1,7 @@
   </main><!-- /page-content -->
 
   <footer class="app-footer">
-    <span>© 2025 <strong>LogiTrack Pro</strong> — Logistics Management System</span>
+    <span>© 2025 <strong>ITL Logistics Group</strong> — Logistics Management System</span>
     <span>v1.0.0 &nbsp;|&nbsp; <?= date('d M Y, H:i') ?></span>
   </footer>
 </div><!-- /main-content -->

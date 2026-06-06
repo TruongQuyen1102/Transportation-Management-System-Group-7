@@ -87,8 +87,8 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
     <p class="text-muted mt-4">System health, user management, and audit overview</p>
   </div>
   <div class="page-actions">
-    <a href="/admin/audit_logs.php" class="btn btn-outline btn-sm">📋 View Full Audit Log</a>
-    <a href="/admin/users.php" class="btn btn-primary btn-sm">👥 Manage Users</a>
+    <a href="../admin/audit_logs.php" class="btn btn-outline btn-sm">📋 View Full Audit Log</a>
+    <a href="../admin/users.php" class="btn btn-primary btn-sm">👥 Manage Users</a>
   </div>
 </div>
 
@@ -138,7 +138,7 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
     </div>
     <div class="card-body" style="display:grid;grid-template-columns:1fr;gap:12px;">
 
-      <a href="/admin/users.php" style="text-decoration:none;">
+      <a href="../admin/users.php" style="text-decoration:none;">
         <div style="background:var(--c-navy-800);color:#fff;border-radius:10px;padding:16px;display:flex;align-items:center;gap:12px;transition:opacity .15s;" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
           <div style="font-size:26px;line-height:1;flex-shrink:0;">👥</div>
           <div>
@@ -148,7 +148,7 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
         </div>
       </a>
 
-      <a href="/admin/roles.php" style="text-decoration:none;">
+      <a href="../admin/roles.php" style="text-decoration:none;">
         <div style="background:var(--c-slate-600);color:#fff;border-radius:10px;padding:16px;display:flex;align-items:center;gap:12px;transition:opacity .15s;" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
           <div style="font-size:26px;line-height:1;flex-shrink:0;">🔐</div>
           <div>
@@ -158,7 +158,7 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
         </div>
       </a>
 
-      <a href="/admin/audit_logs.php" style="text-decoration:none;">
+      <a href="../admin/audit_logs.php" style="text-decoration:none;">
         <div style="background:var(--c-green);color:#fff;border-radius:10px;padding:16px;display:flex;align-items:center;gap:12px;transition:opacity .15s;" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
           <div style="font-size:26px;line-height:1;flex-shrink:0;">📋</div>
           <div>
@@ -168,7 +168,7 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
         </div>
       </a>
 
-      <a href="/admin/import_users.php" style="text-decoration:none;">
+      <a href="../admin/import_users.php" style="text-decoration:none;">
         <div style="background:var(--c-yellow);color:var(--c-navy-800);border-radius:10px;padding:16px;display:flex;align-items:center;gap:12px;transition:opacity .15s;" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
           <div style="font-size:26px;line-height:1;flex-shrink:0;">📥</div>
           <div>
@@ -214,7 +214,7 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
       </div>
     </div>
     <div class="card-footer">
-      <a href="/admin/audit_logs.php" class="btn btn-ghost btn-sm w-100 flex-center">View All Audit Logs →</a>
+      <a href="../admin/audit_logs.php" class="btn btn-ghost btn-sm w-100 flex-center">View All Audit Logs →</a>
     </div>
   </div>
 
@@ -223,7 +223,7 @@ open_page('Admin Dashboard', 'dashboard', [['label' => 'Administration'], ['labe
 <div class="card mt-24">
   <div class="card-header flex-between">
     <h3 class="card-title">📋 Recent Audit Log Entries</h3>
-    <a href="/admin/audit_logs.php" class="btn btn-outline btn-sm">View All</a>
+    <a href="../admin/audit_logs.php" class="btn btn-outline btn-sm">View All</a>
   </div>
   <div class="table-wrapper" style="border: none; box-shadow: none; border-radius: 0;">
     <table>
